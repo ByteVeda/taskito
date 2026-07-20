@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python + uv
         uses: ./.github/actions/setup-python
@@ -65,7 +65,7 @@ jobs:
     name: Rust Tests (SQLite)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/rust-prelude
 
       # $pythonLocation is exported to the job env by setup-python at runtime.
@@ -99,7 +99,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/rust-prelude
 
       - name: Run Rust test suite (PostgreSQL backend)
@@ -124,7 +124,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/rust-prelude
 
       - name: Run Rust test suite (Redis backend)
@@ -140,7 +140,7 @@ jobs:
     name: Publish Readiness (taskito-core)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 

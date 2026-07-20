@@ -27,7 +27,7 @@ jobs:
       run:
         working-directory: dashboard
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/dashboard-build
 
       - name: Verify routeTree.gen.ts is regenerated

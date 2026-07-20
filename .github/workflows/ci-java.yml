@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -48,7 +48,7 @@ jobs:
         java: ["17", "21", "25"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Java + Gradle
         uses: ./.github/actions/setup-java
@@ -86,7 +86,7 @@ jobs:
             runner: windows-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # Vendored OpenSSL needs Perl; point openssl-sys at Strawberry Perl.
       - name: Point vendored OpenSSL at Strawberry Perl (Windows)
@@ -114,7 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
