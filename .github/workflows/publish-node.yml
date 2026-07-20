@@ -60,12 +60,14 @@ jobs:
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Verify version matches package.json
+      - name: Verify version matches codebase
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          version="${{ steps.resolve.outputs.version }}"
-          pkg_ver=$(node -p "require('./sdks/node/package.json').version")
-          if [ "$pkg_ver" != "$version" ]; then
-            echo "::error::Resolved version ${version} != sdks/node/package.json ${pkg_ver}"
+          node scripts/version.mjs --check
+          repo_version="$(node scripts/version.mjs --current)"
+          if [ "$repo_version" != "$VERSION" ]; then
+            echo "::error::Resolved ${VERSION} but the repo declares ${repo_version}"
             exit 1
           fi
 
