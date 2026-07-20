@@ -22,6 +22,6 @@ redis = ["taskito-core/redis", "taskito-workflows/redis"]
 taskito-core = { path = "../taskito-core" }
 taskito-workflows = { path = "../taskito-workflows" }
 ratatui = "0.29"
-crossterm = "0.28"
+crossterm = "0.29"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
