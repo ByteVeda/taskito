@@ -114,6 +114,17 @@ it("reports lag per log subscription", async () => {
   expect(stat.lag).toBe(0);
 });
 
+it("declareSubscriptions flushes a managed consumer's cursor before publishing", async () => {
+  const queue = newQueue();
+  // No worker: logConsumer registers the cursor eagerly but does not await it,
+  // so declareSubscriptions() is the barrier that makes the next publish retain.
+  queue.logConsumer("t-declare", "c", () => {});
+  await queue.declareSubscriptions();
+
+  await queue.publish("t-declare", [1]);
+  expect((await queue.readTopic("t-declare", "c")).map((m) => m.args)).toEqual([[1]]);
+});
+
 it(
   "managed consumers: sync, async, retry-redeliver, and skip-poison in one worker",
   async () => {
@@ -162,6 +173,11 @@ it(
       },
       { pollIntervalMs: 20, onError: "skip" },
     );
+
+    // logConsumer() registers each cursor eagerly but does not await it, and a
+    // publish before the log subscription exists is not retained — so declare
+    // first, or a slow runner silently drops the earliest messages.
+    await queue.declareSubscriptions();
 
     // One worker hosts all four consumers, so their poll loops share a single
     // (cold-runner-slow) startup instead of one worker lifecycle per test.
