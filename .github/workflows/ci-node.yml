@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -70,7 +70,7 @@ jobs:
         node: ["20", "22", "24"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Node + pnpm
         uses: ./.github/actions/setup-node
@@ -105,7 +105,7 @@ jobs:
         run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
 
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust

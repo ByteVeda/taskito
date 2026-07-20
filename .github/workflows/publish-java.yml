@@ -38,7 +38,7 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Resolve and verify version
         id: resolve
         env:
@@ -84,7 +84,7 @@ jobs:
             runner: windows-latest
             libname: taskito_java.dll
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Point vendored OpenSSL at Strawberry Perl (Windows)
         if: runner.os == 'Windows'
@@ -121,7 +121,7 @@ jobs:
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
