@@ -65,6 +65,15 @@ export interface UrlSafetyOptions {
   allowPrivate?: boolean;
 }
 
+export interface SafeLookupOptions extends UrlSafetyOptions {
+  /**
+   * Bound on the resolution itself. A request timeout only starts once a socket
+   * is assigned, so without this an unresponsive resolver stalls the delivery
+   * indefinitely. Unbounded when unset.
+   */
+  timeoutMs?: number;
+}
+
 /**
  * Validate `raw` on its face — bad scheme, missing host, known-local name, or a
  * literal private address — without resolving DNS.
@@ -98,9 +107,13 @@ export function assertSafeWebhookUrl(raw: string, options?: UrlSafetyOptions): v
  * Only a blocked address is an {@link UnsafeWebhookUrlError}; a resolver
  * failure stays an ordinary error so callers can retry it.
  */
-export function createSafeLookup(options?: UrlSafetyOptions): LookupFunction {
+export function createSafeLookup(options?: SafeLookupOptions): LookupFunction {
   return (hostname, lookupOptions, callback) => {
-    lookup(hostname, { ...lookupOptions, all: true, verbatim: true })
+    withTimeout(
+      lookup(hostname, { ...lookupOptions, all: true, verbatim: true }),
+      options?.timeoutMs,
+      `resolving ${hostname}`,
+    )
       .then((addresses) => {
         if (!allowPrivate(options)) {
           for (const { address } of addresses) {
@@ -121,6 +134,24 @@ export function createSafeLookup(options?: UrlSafetyOptions): LookupFunction {
         callback(cause instanceof Error ? cause : new Error(String(cause)), "", 0);
       });
   };
+}
+
+/** Reject `promise` once `timeoutMs` elapses; pass it through when unset. */
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number | undefined,
+  what: string,
+): Promise<T> {
+  if (timeoutMs === undefined) {
+    return promise;
+  }
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${timeoutMs}ms ${what}`)),
+      timeoutMs,
+    );
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
 }
 
 /** Whether the guard is disabled, from the option or the environment. */

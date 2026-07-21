@@ -17,7 +17,6 @@ const log = createLogger("webhooks");
 /** Signs and POSTs webhook payloads with retries; keeps a recent-delivery log. */
 export class Deliverer {
   private readonly recent: Delivery[] = [];
-  private readonly safeLookup = createSafeLookup();
 
   recentFor(webhookId: string): Delivery[] {
     return this.recent.filter((delivery) => delivery.webhookId === webhookId);
@@ -35,6 +34,8 @@ export class Deliverer {
       headers["x-taskito-signature"] = `sha256=${signature}`;
     }
 
+    // Resolution is bounded by the same budget as the request it precedes.
+    const safeLookup = createSafeLookup({ timeoutMs: webhook.timeoutMs });
     const createdAt = Date.now();
     let attempts = 0;
     let responseCode: number | null = null;
@@ -64,7 +65,7 @@ export class Deliverer {
           headers,
           body,
           timeoutMs: webhook.timeoutMs,
-          lookup: this.safeLookup,
+          lookup: safeLookup,
         });
         responseCode = response.status;
         responseBody = response.body;

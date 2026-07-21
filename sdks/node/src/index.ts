@@ -119,7 +119,13 @@ export {
   setLogLevel,
   setLogSink,
 } from "./utils";
-export type { Delivery, UrlSafetyOptions, Webhook, WebhookInput } from "./webhooks";
+export type {
+  Delivery,
+  SafeLookupOptions,
+  UrlSafetyOptions,
+  Webhook,
+  WebhookInput,
+} from "./webhooks";
 export {
   assertSafeWebhookUrl,
   createSafeLookup,
