@@ -23,7 +23,7 @@ export function webhookToContract(webhook: Webhook) {
     has_secret: Boolean(webhook.secret),
     max_retries: webhook.maxRetries,
     timeout_seconds: webhook.timeoutMs / 1000,
-    retry_backoff: 2.0,
+    retry_backoff: webhook.retryBackoff,
     enabled: webhook.enabled,
     description: webhook.description ?? null,
     created_at: webhook.createdAt,

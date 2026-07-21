@@ -14,6 +14,7 @@ const ALL_EVENTS: EventName[] = ["job.completed", "job.retrying", "job.dead", "j
 const log = createLogger("webhooks");
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_RETRY_BACKOFF = 2;
 
 /** Reject misconfigured webhooks before they reach persistence. */
 function validateWebhook(webhook: Webhook): void {
@@ -28,6 +29,9 @@ function validateWebhook(webhook: Webhook): void {
   }
   if (!Number.isFinite(webhook.timeoutMs) || webhook.timeoutMs <= 0) {
     throw new WebhookValidationError("webhook timeout must be a positive number");
+  }
+  if (!Number.isFinite(webhook.retryBackoff) || webhook.retryBackoff <= 0) {
+    throw new WebhookValidationError("webhook retryBackoff must be a positive number");
   }
 }
 
@@ -64,6 +68,7 @@ export class WebhookManager {
       enabled: input.enabled ?? true,
       maxRetries: input.maxRetries ?? DEFAULT_MAX_RETRIES,
       timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      retryBackoff: input.retryBackoff ?? DEFAULT_RETRY_BACKOFF,
       createdAt: now,
       updatedAt: now,
     };

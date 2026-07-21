@@ -92,7 +92,7 @@ export class Deliverer {
         }
       }
       if (attempts <= webhook.maxRetries) {
-        await sleep(backoff(attempts));
+        await sleep(backoff(attempts, webhook.retryBackoff));
       }
     }
 
@@ -211,6 +211,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function backoff(attempt: number): number {
-  return Math.min(MAX_BACKOFF_MS, 500 * 2 ** (attempt - 1));
+/** Contract curve: the Nth wait is `base ** N` seconds, N counted from zero. */
+function backoff(attempt: number, base: number): number {
+  return Math.min(MAX_BACKOFF_MS, base ** (attempt - 1) * 1000);
 }
