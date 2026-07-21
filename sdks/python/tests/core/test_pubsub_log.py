@@ -177,7 +177,10 @@ class TestManagedConsumer:
             lambda: handled == [1], timeout=30, message="consumer should run before shutdown"
         )
         queue.shutdown()
-        thread.join(timeout=5)
+        # SQLite is opened with ``busy_timeout = 5000``, so one contended query
+        # during the drain can block for 5s on its own — a 5s budget can't bound
+        # a shutdown. Wait past that, well under the 30s drain timeout.
+        thread.join(timeout=20)
         assert not thread.is_alive()
 
 

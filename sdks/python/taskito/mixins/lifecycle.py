@@ -299,12 +299,15 @@ class QueueLifecycleMixin:
                 EventType.WORKER_STOPPED,
                 {"worker_id": worker_id},
             )
+            # Stop the consumer poll loops before waiting on anything else: their
+            # per-interval reads otherwise keep contending for the storage lock
+            # while the heartbeat makes its final round trip.
+            stop_log_consumers.set()
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=6)
-            # Drain managed log consumers before tearing down resources a handler
+            # Join managed log consumers before tearing down resources a handler
             # might still hold: give them a shared deadline (the worker drain
             # timeout) to finish their in-flight message, not a fixed slice each.
-            stop_log_consumers.set()
             consumer_deadline = time.monotonic() + self._drain_timeout
             for consumer in log_consumer_threads:
                 consumer.join(timeout=max(0.0, consumer_deadline - time.monotonic()))
