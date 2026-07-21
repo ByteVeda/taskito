@@ -7,6 +7,7 @@ import { type DeliveryFilters, DeliveryLog } from "./deliveryLog";
 import { WebhookValidationError } from "./errors";
 import { WebhookStore } from "./store";
 import type { Delivery, Webhook, WebhookInput } from "./types";
+import { assertSafeWebhookUrl } from "./urlSafety";
 
 const ALL_EVENTS: EventName[] = ["job.completed", "job.retrying", "job.dead", "job.cancelled"];
 
@@ -19,11 +20,9 @@ function validateWebhook(webhook: Webhook): void {
   if (!webhook.url) {
     throw new WebhookValidationError("webhook url is required");
   }
-  try {
-    new URL(webhook.url);
-  } catch {
-    throw new WebhookValidationError(`invalid webhook url: ${webhook.url}`);
-  }
+  // Registration is synchronous, so only the checks that need no DNS run here;
+  // named hosts are resolved and re-checked on every delivery attempt.
+  assertSafeWebhookUrl(webhook.url);
   if (!Number.isInteger(webhook.maxRetries) || webhook.maxRetries < 0) {
     throw new WebhookValidationError("webhook maxRetries must be a non-negative integer");
   }

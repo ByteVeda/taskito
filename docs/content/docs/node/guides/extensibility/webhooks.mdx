@@ -38,6 +38,12 @@ queue.webhooks.delete(hook.id);
 Deliveries fire from the **worker process** (where events originate). Verify the
 signature on your endpoint by HMAC-ing the raw body with the shared secret.
 
+Destinations are screened by an [SSRF
+guard](/node/guides/operations/security#webhooks): loopback, private,
+link-local, and cloud-metadata targets are rejected at registration and
+re-checked before every attempt, and redirects are not followed. Set
+`TASKITO_WEBHOOKS_ALLOW_PRIVATE=1` when developing against a local endpoint.
+
 ## Delivery log
 
 `queue.webhooks.deliveries(id)` returns the most recent attempt-chains for a
@@ -52,7 +58,7 @@ for (const delivery of queue.webhooks.deliveries(hook.id)) {
 | Field | Description |
 |---|---|
 | `id` / `webhookId` / `event` | Identifiers for the delivery and its subscription. |
-| `status` | `"delivered"` (2xx) or `"dead"` (retries exhausted). |
+| `status` | `"delivered"` (2xx), `"failed"` (refused — blocked URL or redirect), or `"dead"` (retries exhausted). |
 | `ok` | `true` when `status` is `"delivered"`. |
 | `attempts` | Number of HTTP attempts made. |
 | `payload` | The JSON body that was POSTed. |

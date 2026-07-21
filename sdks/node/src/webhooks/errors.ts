@@ -7,3 +7,14 @@ export class WebhookValidationError extends TaskitoError {
     this.name = "WebhookValidationError";
   }
 }
+
+/**
+ * Thrown when a webhook URL targets a destination we refuse to deliver to
+ * (SSRF guard). A validation error so the dashboard still answers 400.
+ */
+export class UnsafeWebhookUrlError extends WebhookValidationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsafeWebhookUrlError";
+  }
+}

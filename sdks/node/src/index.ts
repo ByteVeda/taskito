@@ -119,8 +119,20 @@ export {
   setLogLevel,
   setLogSink,
 } from "./utils";
-export type { Delivery, Webhook, WebhookInput } from "./webhooks";
-export { WebhookManager, WebhookValidationError } from "./webhooks";
+export type {
+  Delivery,
+  SafeLookupOptions,
+  UrlSafetyOptions,
+  Webhook,
+  WebhookInput,
+} from "./webhooks";
+export {
+  assertSafeWebhookUrl,
+  createSafeLookup,
+  UnsafeWebhookUrlError,
+  WebhookManager,
+  WebhookValidationError,
+} from "./webhooks";
 export { Worker } from "./worker";
 export type {
   CanvasStep,
