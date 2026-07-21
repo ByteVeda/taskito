@@ -44,9 +44,10 @@ export class Deliverer {
     let nonRetryable = false;
     while (attempts <= webhook.maxRetries) {
       try {
-        // Re-check before every attempt: a host that was safe at registration
-        // may have been rebound to a private address since (or between retries).
-        await assertSafeWebhookUrl(webhook.url);
+        // Re-checked per attempt so a subscription whose URL policy changed
+        // mid-chain stops here. Whether the *name* points somewhere private is
+        // settled by `safeLookup` at connect time, not guessed at up front.
+        assertSafeWebhookUrl(webhook.url);
       } catch (cause) {
         if (!(cause instanceof UnsafeWebhookUrlError)) {
           throw cause;

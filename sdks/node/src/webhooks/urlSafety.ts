@@ -12,6 +12,10 @@ import { UnsafeWebhookUrlError } from "./errors";
  * `TASKITO_WEBHOOKS_ALLOW_PRIVATE` (truthy) to disable the guard when developing
  * against a local endpoint.
  *
+ * Two layers: {@link assertSafeWebhookUrl} rules on the URL itself (scheme,
+ * host name, literal address) without touching DNS, and {@link createSafeLookup}
+ * rules on the resolved address at the moment the socket dials it.
+ *
  * Mirrors the cross-SDK `validate_webhook_url` contract.
  */
 
@@ -62,13 +66,15 @@ export interface UrlSafetyOptions {
 }
 
 /**
- * Validate `raw` without resolving DNS.
+ * Validate `raw` on its face — bad scheme, missing host, known-local name, or a
+ * literal private address — without resolving DNS.
  *
- * Used on the registration path, which is synchronous: it rejects a bad scheme,
- * a missing host, a known-local name, and a literal private address right away.
- * Named hosts are fully checked by {@link assertSafeWebhookUrl} at delivery time.
+ * Deliberately synchronous so registration and every delivery attempt can run
+ * it. Whether a *named* host points somewhere private is decided by
+ * {@link createSafeLookup} when the socket resolves it, which is both the
+ * authoritative answer and the one that cannot be raced.
  */
-export function assertSafeWebhookUrlSync(raw: string, options?: UrlSafetyOptions): void {
+export function assertSafeWebhookUrl(raw: string, options?: UrlSafetyOptions): void {
   const hostname = parseHostname(raw);
   if (allowPrivate(options)) {
     return;
@@ -76,39 +82,6 @@ export function assertSafeWebhookUrlSync(raw: string, options?: UrlSafetyOptions
   assertHostnameAllowed(hostname);
   if (isIP(hostname) !== 0) {
     assertAddressAllowed(hostname, hostname);
-  }
-}
-
-/**
- * Validate `raw`, resolving the host and checking every address it maps to.
- *
- * Called on every delivery attempt, not just at registration: a name that was
- * safe when the webhook was created can be rebound to a private address later.
- * A residual race remains between this resolve and the socket connect, but it
- * closes the wide registration-to-delivery window.
- *
- * @throws UnsafeWebhookUrlError on a non-http(s) scheme, a missing host, an
- *   unresolvable host, or a host that maps to a blocked address.
- */
-export async function assertSafeWebhookUrl(raw: string, options?: UrlSafetyOptions): Promise<void> {
-  const hostname = parseHostname(raw);
-  if (allowPrivate(options)) {
-    return;
-  }
-  assertHostnameAllowed(hostname);
-
-  if (isIP(hostname) !== 0) {
-    assertAddressAllowed(hostname, hostname);
-    return;
-  }
-  let resolved: Array<{ address: string }>;
-  try {
-    resolved = await lookup(hostname, { all: true, verbatim: true });
-  } catch {
-    throw new UnsafeWebhookUrlError(`could not resolve webhook host ${hostname}`);
-  }
-  for (const { address } of resolved) {
-    assertAddressAllowed(address, hostname);
   }
 }
 
@@ -116,11 +89,14 @@ export async function assertSafeWebhookUrl(raw: string, options?: UrlSafetyOptio
  * A `net.LookupFunction` that fails the connection when the host resolves to a
  * blocked address.
  *
- * {@link assertSafeWebhookUrl} validates one DNS answer, but the transport
- * resolves the name again when it dials, leaving a rebinding window between the
- * two. Handing this lookup to the request closes it: the address the socket
- * actually connects to is the address that was checked, and the original
- * hostname still drives the Host header and TLS SNI.
+ * Checking a name up front cannot bind the transport, which resolves it again
+ * when it dials — the rebinding window is between the two. Handing this lookup
+ * to the request closes it: the address the socket connects to *is* the address
+ * that was checked, and the original hostname still drives the Host header and
+ * TLS SNI.
+ *
+ * Only a blocked address is an {@link UnsafeWebhookUrlError}; a resolver
+ * failure stays an ordinary error so callers can retry it.
  */
 export function createSafeLookup(options?: UrlSafetyOptions): LookupFunction {
   return (hostname, lookupOptions, callback) => {

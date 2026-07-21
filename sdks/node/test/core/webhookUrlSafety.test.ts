@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   assertSafeWebhookUrl,
-  assertSafeWebhookUrlSync,
   createSafeLookup,
   Queue,
   UnsafeWebhookUrlError,
@@ -57,46 +56,35 @@ const UNSAFE_URLS = [
 
 it("rejects private, loopback, and local-only destinations", () => {
   for (const url of UNSAFE_URLS) {
-    expect(() => assertSafeWebhookUrlSync(url), url).toThrow(UnsafeWebhookUrlError);
+    expect(() => assertSafeWebhookUrl(url), url).toThrow(UnsafeWebhookUrlError);
   }
 });
 
 it("accepts public destinations", () => {
-  expect(() => assertSafeWebhookUrlSync("https://example.com/hook")).not.toThrow();
-  expect(() => assertSafeWebhookUrlSync("http://93.184.216.34/hook")).not.toThrow();
+  expect(() => assertSafeWebhookUrl("https://example.com/hook")).not.toThrow();
+  expect(() => assertSafeWebhookUrl("http://93.184.216.34/hook")).not.toThrow();
 });
 
 it("rejects non-http schemes and hostless urls even when the guard is bypassed", () => {
-  expect(() => assertSafeWebhookUrlSync("ftp://example.com/hook", { allowPrivate: true })).toThrow(
+  expect(() => assertSafeWebhookUrl("ftp://example.com/hook", { allowPrivate: true })).toThrow(
     UnsafeWebhookUrlError,
   );
-  expect(() => assertSafeWebhookUrlSync("not-a-url", { allowPrivate: true })).toThrow(
+  expect(() => assertSafeWebhookUrl("not-a-url", { allowPrivate: true })).toThrow(
     UnsafeWebhookUrlError,
   );
 });
 
 it("bypasses the address checks when allow-private is set", () => {
-  expect(() => assertSafeWebhookUrlSync("http://127.0.0.1:9000/hook")).toThrow();
+  expect(() => assertSafeWebhookUrl("http://127.0.0.1:9000/hook")).toThrow();
   process.env[ALLOW_ENV_VAR] = "1";
-  expect(() => assertSafeWebhookUrlSync("http://127.0.0.1:9000/hook")).not.toThrow();
+  expect(() => assertSafeWebhookUrl("http://127.0.0.1:9000/hook")).not.toThrow();
 });
 
 it("treats falsy environment values as guard-enabled", () => {
   for (const value of ["", "0", "false", "no", "off"]) {
     process.env[ALLOW_ENV_VAR] = value;
-    expect(() => assertSafeWebhookUrlSync("http://127.0.0.1/hook"), value).toThrow();
+    expect(() => assertSafeWebhookUrl("http://127.0.0.1/hook"), value).toThrow();
   }
-});
-
-it("checks literal addresses on the async path too", async () => {
-  await expect(assertSafeWebhookUrl("http://192.168.1.10/hook")).rejects.toBeInstanceOf(
-    UnsafeWebhookUrlError,
-  );
-  await expect(assertSafeWebhookUrl("http://[::1]/hook")).rejects.toBeInstanceOf(
-    UnsafeWebhookUrlError,
-  );
-  process.env[ALLOW_ENV_VAR] = "1";
-  await expect(assertSafeWebhookUrl("http://192.168.1.10/hook")).resolves.toBeUndefined();
 });
 
 it("fails the connect-time lookup for a name that resolves to a blocked address", async () => {
@@ -112,6 +100,15 @@ it("fails the connect-time lookup for a name that resolves to a blocked address"
     createSafeLookup()("localhost", { all: true }, (cause) => resolve(cause));
   });
   expect(bypassed).toBeNull();
+});
+
+it("reports a resolver failure as an ordinary, retryable error", async () => {
+  const error = await new Promise<Error | null>((resolve) => {
+    createSafeLookup()("host.invalid", { all: true }, (cause) => resolve(cause));
+  });
+  expect(error).toBeInstanceOf(Error);
+  // A transient resolver problem is not a policy refusal — callers retry it.
+  expect(error).not.toBeInstanceOf(UnsafeWebhookUrlError);
 });
 
 it("refuses to register a webhook pointed at the metadata service", () => {

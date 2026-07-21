@@ -122,7 +122,6 @@ export {
 export type { Delivery, UrlSafetyOptions, Webhook, WebhookInput } from "./webhooks";
 export {
   assertSafeWebhookUrl,
-  assertSafeWebhookUrlSync,
   createSafeLookup,
   UnsafeWebhookUrlError,
   WebhookManager,
