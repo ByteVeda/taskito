@@ -9,15 +9,18 @@ import org.byteveda.taskito.dashboard.support.Json;
 
 /**
  * Generic settings KV API. Keys under the reserved prefixes ({@code auth:},
- * {@code webhooks:}) are treated as absent everywhere — never listed, read,
+ * {@code webhooks:}, {@code retention:}) are treated as absent everywhere — never listed, read,
  * written, or deleted through this surface — so auth and webhook state cannot be
  * exposed or clobbered. Keys are capped at 256 chars, values at 64 KiB.
  */
 public final class SettingsHandlers {
     static final int MAX_KEY_LENGTH = 256;
     static final int MAX_VALUE_LENGTH = 64 * 1024;
-    // Hide auth state and the webhook store (persisted under the "taskito.webhooks" key).
-    private static final List<String> PROTECTED_PREFIXES = List.of("auth:", "webhooks:", "taskito.webhooks");
+    // Hide auth state, the webhook store (persisted under the "taskito.webhooks"
+    // key), and the retention windows the cleaner publishes — a report of what
+    // the worker does, not a knob.
+    private static final List<String> PROTECTED_PREFIXES =
+            List.of("auth:", "webhooks:", "taskito.webhooks", "retention:");
 
     private final SettingsAccess settings;
 

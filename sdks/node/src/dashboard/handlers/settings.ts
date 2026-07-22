@@ -12,8 +12,9 @@ const MAX_VALUE_LENGTH = 64 * 1024; // 64 KiB — enough for any dashboard confi
 // public settings API. `auth:` holds password hashes and live sessions
 // (reading or overwriting these is a full auth bypass); `webhook`-prefixed
 // keys hold subscription rows with plaintext HMAC secrets plus delivery
-// logs. Protected keys are treated as absent.
-const PROTECTED_PREFIXES = ["auth:", "webhooks:", "webhook:"];
+// logs. `retention:` holds the windows the cleaner publishes — a report of
+// what the worker does, not a knob. Protected keys are treated as absent.
+const PROTECTED_PREFIXES = ["auth:", "webhooks:", "webhook:", "retention:"];
 
 const isProtected = (key: string): boolean => PROTECTED_PREFIXES.some((p) => key.startsWith(p));
 

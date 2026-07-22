@@ -42,6 +42,7 @@ import {
   ResourceRuntime,
   type ResourceScope,
 } from "./resources";
+import { parseEffectiveRetention } from "./retention";
 import {
   CodecSerializer,
   deserializeCall,
@@ -58,6 +59,7 @@ import type {
   DeadJob,
   DeclaredTopic,
   DetailedJobFilter,
+  EffectiveRetention,
   EnqueueOptions,
   Job,
   JobDag,
@@ -1215,6 +1217,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** All dashboard settings as a key → value record. */
   listSettings(): Record<string, string> {
     return this.native.listSettings();
+  }
+
+  /**
+   * The retention windows a worker is applying to this namespace, or `null`
+   * when no worker has swept yet — distinct from retention being disabled,
+   * which reports with `enabled: false`.
+   */
+  effectiveRetention(): EffectiveRetention | null {
+    const raw = this.native.effectiveRetention();
+    return raw === null ? null : parseEffectiveRetention(raw);
   }
 
   // ── Task & queue overrides (dashboard-tunable runtime config) ─────

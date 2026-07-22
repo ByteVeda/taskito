@@ -27,9 +27,11 @@ _MAX_VALUE_LENGTH = 64 * 1024  # 64 KiB — enough for any realistic dashboard c
 # is a full auth bypass. ``webhooks:`` holds subscription rows with plaintext
 # HMAC signing secrets plus delivery logs (full request payloads / response
 # bodies); the dedicated webhooks API redacts the secret to ``has_secret``, so
-# these must stay out of the generic settings endpoints too. The settings
-# handlers treat every protected key as if absent.
-_PROTECTED_PREFIXES = ("auth:", "webhooks:")
+# these must stay out of the generic settings endpoints too. ``retention:``
+# holds the windows the cleaner publishes — a report of what the worker does,
+# not a knob, and writable only by the cleaner itself. The settings handlers
+# treat every protected key as if absent.
+_PROTECTED_PREFIXES = ("auth:", "webhooks:", "retention:")
 
 
 def _is_protected(key: str) -> bool:

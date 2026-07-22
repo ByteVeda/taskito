@@ -3,6 +3,9 @@ use log::{error, info, warn};
 use crate::error::Result;
 use crate::job::{now_millis, NewJob};
 use crate::periodic::{next_cron_time, next_cron_time_tz};
+use crate::scheduler::retention::{
+    publish_effective_retention, EffectiveRetention, RetentionConfig, DEFAULT_NAMESPACE,
+};
 use crate::storage::{
     dead_worker_cutoff, try_lead, Storage, RETENTION_LOCK, RETENTION_LOCK_TTL_MS,
 };
@@ -43,11 +46,7 @@ fn iso_cutoff(ms: i64) -> String {
 /// Warn, once, that retention is deleting history on the recommended defaults —
 /// a policy the operator did not set. Names the queue and every active window
 /// (duration + resolved cutoff) and how to opt out.
-fn announce_default_retention(
-    namespace: &str,
-    windows: &crate::scheduler::retention::RetentionConfig,
-    now: i64,
-) {
+fn announce_default_retention(namespace: &str, windows: &RetentionConfig, now: i64) {
     // `namespace`, not a queue name: the purge predicates are not queue-scoped,
     // so the windows below apply cluster-wide within this namespace.
     let mut msg = format!(
@@ -172,6 +171,22 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Record the windows this leader applies under its namespace, so a
+    /// dashboard in any process can echo the live policy rather than guess at
+    /// the defaults. Rewritten every sweep: `reported_at` then doubles as proof
+    /// a leader is still enforcing it.
+    fn publish_retention(&self, windows: &RetentionConfig, now: i64) -> Result<()> {
+        let namespace = self.namespace.as_deref().unwrap_or(DEFAULT_NAMESPACE);
+        let snapshot = EffectiveRetention {
+            enabled: !windows.is_empty(),
+            defaulted: self.config.retention_is_defaulted(),
+            namespace: namespace.to_string(),
+            reported_at: now,
+            windows: windows.clone(),
+        };
+        publish_effective_retention(&self.storage, self.namespace.as_deref(), &snapshot)
+    }
+
     /// Purge expired rows in each history table per its retention window. The
     /// per-entry TTL sweeps inside the archived/dead purges run every tick — a
     /// job or DLQ entry can carry its own `result_ttl` even when its table has no
@@ -207,9 +222,16 @@ impl Scheduler {
         // process (the election means that's the leader). Skipped for an explicit
         // or legacy config — that is the operator's own choice.
         if self.config.retention_is_defaulted() {
-            let namespace = self.namespace.as_deref().unwrap_or("default");
+            let namespace = self.namespace.as_deref().unwrap_or(DEFAULT_NAMESPACE);
             self.retention_announced
                 .call_once(|| announce_default_retention(namespace, &windows, now));
+        }
+
+        // Publish before deleting: a dashboard that shows the windows only after
+        // the rows are gone explains nothing. Log-and-continue — an unreported
+        // policy must never stop the sweeps.
+        if let Err(e) = self.publish_retention(&windows, now) {
+            warn!("publishing the retention windows failed: {e}");
         }
 
         // A window `ttl` becomes the cutoff `now - ttl`; an absent window is a

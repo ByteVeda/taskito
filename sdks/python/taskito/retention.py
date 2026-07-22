@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -51,3 +53,49 @@ class Retention:
             "job_errors": self.job_errors,
         }
         return {table: secs for table, secs in fields.items() if secs is not None}
+
+
+#: History tables auto-cleanup purges, in the order operators read them —
+#: shortest-lived first, the dead-letter queue last.
+RETENTION_TABLES: tuple[str, ...] = (
+    "task_logs",
+    "archived_jobs",
+    "job_errors",
+    "task_metrics",
+    "dead_letter",
+)
+
+
+@dataclass(frozen=True)
+class EffectiveRetention:
+    """The windows a worker is actually applying, as reported by the cleaner.
+
+    Retention runs in the worker process, so this is published by the elected
+    cleaner on each sweep rather than read from local config — a dashboard or
+    admin script in another process sees the policy that governs the deletes.
+    Windows are **milliseconds** (the wire unit); ``None`` keeps a table forever.
+    """
+
+    enabled: bool
+    """False when no table has a window — only per-entry TTLs are swept."""
+    defaulted: bool
+    """True when the windows are the recommended defaults, set by no one."""
+    namespace: str
+    """Namespace the windows cover. The purges are not queue-scoped."""
+    reported_at: int
+    """When the cleaner last published this, in Unix milliseconds."""
+    windows: dict[str, int | None]
+    """``{table: window_ms}`` for every table in :data:`RETENTION_TABLES`."""
+
+    @classmethod
+    def _from_json(cls, raw: str) -> EffectiveRetention:
+        """Parse the document the core publishes. See ``BINDING_CONTRACT.md``."""
+        doc: dict[str, Any] = json.loads(raw)
+        published: dict[str, Any] = doc.get("windows") or {}
+        return cls(
+            enabled=bool(doc.get("enabled", False)),
+            defaulted=bool(doc.get("defaulted", False)),
+            namespace=str(doc.get("namespace", "default")),
+            reported_at=int(doc.get("reported_at", 0)),
+            windows={table: published.get(f"{table}_ttl_ms") for table in RETENTION_TABLES},
+        )

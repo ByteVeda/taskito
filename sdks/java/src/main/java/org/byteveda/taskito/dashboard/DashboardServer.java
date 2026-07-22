@@ -19,6 +19,7 @@ import org.byteveda.taskito.dashboard.api.CoreHandlers;
 import org.byteveda.taskito.dashboard.api.MetricsHandlers;
 import org.byteveda.taskito.dashboard.api.OpsHandlers;
 import org.byteveda.taskito.dashboard.api.OverridesHandlers;
+import org.byteveda.taskito.dashboard.api.RetentionHandlers;
 import org.byteveda.taskito.dashboard.api.SettingsHandlers;
 import org.byteveda.taskito.dashboard.api.WebhooksHandlers;
 import org.byteveda.taskito.dashboard.api.WorkflowsHandlers;
@@ -335,6 +336,7 @@ public final class DashboardServer implements AutoCloseable {
         CoreHandlers core = new CoreHandlers(queue);
         SettingsAccess settings = SettingsAccess.of(queue);
         SettingsHandlers settingsApi = new SettingsHandlers(settings);
+        RetentionHandlers retention = new RetentionHandlers(queue);
         OverridesHandlers overrides = new OverridesHandlers(queue, new OverridesStore(settings));
         MetricsHandlers metrics = new MetricsHandlers(queue);
         WorkflowsHandlers workflows = new WorkflowsHandlers(queue);
@@ -382,6 +384,7 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/workflows/runs/([^/]+)", req -> workflows.run(req.param(0)));
 
         // Settings KV
+        r.get("/api/retention", req -> retention.retention());
         r.get("/api/settings", req -> settingsApi.list());
         r.get("/api/settings/(.+)", req -> settingsApi.get(req.param(0)));
         r.put("/api/settings/(.+)", req -> settingsApi.put(req.param(0), req.jsonBody()));

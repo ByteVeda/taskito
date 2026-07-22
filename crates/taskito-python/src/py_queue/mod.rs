@@ -669,6 +669,17 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// The retention windows the elected cleaner last published for this
+    /// queue's namespace, as a JSON document, or ``None`` if no worker has
+    /// swept yet. See ``BINDING_CONTRACT.md``.
+    pub fn effective_retention(&self) -> PyResult<Option<String>> {
+        taskito_core::scheduler::retention::read_effective_retention_json(
+            &self.storage,
+            self.namespace.as_deref(),
+        )
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Return all dashboard settings as a ``{key: value}`` dict.
     pub fn list_settings(&self) -> PyResult<std::collections::HashMap<String, String>> {
         self.storage

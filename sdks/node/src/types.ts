@@ -315,3 +315,28 @@ export interface RetentionOptions {
   /** Per-attempt job errors. */
   jobErrors?: number;
 }
+
+/**
+ * The windows a worker is actually applying, as reported by the elected
+ * cleaner on each sweep. Retention runs in the worker process, so this is the
+ * policy that governs the deletes — not this process's configuration.
+ * Windows are **milliseconds**; `null` keeps a table forever.
+ */
+export interface EffectiveRetention {
+  /** False when no table has a window — only per-entry TTLs are swept. */
+  enabled: boolean;
+  /** True when the windows are the recommended defaults, set by no one. */
+  defaulted: boolean;
+  /** Namespace the windows cover. The purges are not queue-scoped. */
+  namespace: string;
+  /** When the cleaner last published this, in Unix milliseconds. */
+  reportedAt: number;
+  /** Per-table windows in milliseconds. */
+  windows: {
+    archivedJobs: number | null;
+    deadLetter: number | null;
+    taskLogs: number | null;
+    taskMetrics: number | null;
+    jobErrors: number | null;
+  };
+}

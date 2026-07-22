@@ -42,3 +42,26 @@ export interface BrandOverrides {
 
 /** Raw key→value snapshot returned by ``GET /api/settings``. */
 export type SettingsSnapshot = Record<string, string>;
+
+/** Per-table retention windows in milliseconds; `null` keeps a table forever. */
+export interface RetentionWindows {
+  task_logs_ttl_ms: number | null;
+  archived_jobs_ttl_ms: number | null;
+  job_errors_ttl_ms: number | null;
+  task_metrics_ttl_ms: number | null;
+  dead_letter_ttl_ms: number | null;
+}
+
+/**
+ * What ``GET /api/retention`` reports: the windows the elected cleaner
+ * published, not this process's config. ``reported: false`` means no worker
+ * has swept yet — distinct from retention being off (``enabled: false``).
+ */
+export interface RetentionSnapshot {
+  reported: boolean;
+  enabled: boolean;
+  defaulted: boolean;
+  namespace: string | null;
+  reported_at: number | null;
+  windows: RetentionWindows;
+}

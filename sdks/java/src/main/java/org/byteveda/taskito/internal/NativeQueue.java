@@ -99,6 +99,9 @@ public final class NativeQueue {
 
     public static native String listSettings(long handle);
 
+    /** The published retention windows as JSON, or {@code null} if unreported. */
+    public static native String effectiveRetention(long handle);
+
     // ── Logs ────────────────────────────────────────────────────────
     public static native void writeTaskLog(
             long handle, String jobId, String taskName, String level, String message, String extraOrNull);

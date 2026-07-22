@@ -109,6 +109,26 @@ queue = Queue(
 control; when both are set, `retention` wins. A negative `result_ttl` is
 rejected at construction.
 
+### Seeing the active windows
+
+Retention runs in the worker process, so the resolved windows are reported by
+the worker elected to run cleanup rather than read from local config. The
+dashboard's **Settings** page echoes them, and `effective_retention()` returns
+the same report:
+
+```python
+policy = queue.effective_retention()
+if policy is None:
+    print("no worker has swept yet — the active policy is unknown")
+else:
+    print(policy.enabled, policy.defaulted, policy.windows["task_logs"])
+```
+
+Windows are in **milliseconds** here (the reporting unit), and `None` keeps a
+table forever. `None` for the whole report means unreported — the first sweep
+publishes it — which is deliberately distinct from retention being disabled
+(`enabled=False`).
+
 ### Cascade cleanup
 
 Manual `purge_completed()` / `purge_dead()` is a blunt delete — it removes a

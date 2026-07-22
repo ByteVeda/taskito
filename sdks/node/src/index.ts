@@ -84,6 +84,7 @@ export type {
   CursorJobFilter,
   DeadJob,
   DetailedJobFilter,
+  EffectiveRetention,
   EnqueueOptions,
   Job,
   JobError,

@@ -6,12 +6,21 @@ import {
   ExternalLinksSection,
   IntegrationsSection,
   RefreshIntervalSection,
+  RetentionSection,
+  retentionQuery,
   settingsQuery,
   useSettings,
 } from "@/features/settings";
 
 export const Route = createFileRoute("/settings")({
-  loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(settingsQuery()),
+  loader: ({ context: { queryClient } }) => {
+    // Retention is one read-only panel: prefetch it best-effort so a backend
+    // that can't report its windows never costs the operator the whole page
+    // (branding, integrations, links). `prefetchQuery` resolves on failure;
+    // the section renders its own error state from the cached rejection.
+    void queryClient.prefetchQuery(retentionQuery());
+    return queryClient.ensureQueryData(settingsQuery());
+  },
   component: SettingsPage,
 });
 
@@ -23,7 +32,7 @@ function SettingsPage() {
       <PageHeader
         eyebrow="Configuration"
         title="Settings"
-        description="Branding, dashboard behaviour, integrations, and quick links — shared across every worker."
+        description="Branding, dashboard behaviour, retention, integrations, and quick links — shared across every worker."
       />
 
       {isLoading || !data ? (
@@ -42,6 +51,7 @@ function SettingsPage() {
         <div className="flex flex-col gap-[var(--gap)]">
           <BrandingSection settings={data} />
           <RefreshIntervalSection />
+          <RetentionSection />
           <IntegrationsSection settings={data} />
           <ExternalLinksSection settings={data} />
         </div>

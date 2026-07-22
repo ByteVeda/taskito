@@ -232,6 +232,11 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public Optional<String> effectiveRetentionJson() {
+        return withOpenHandle(() -> Optional.ofNullable(NativeQueue.effectiveRetention(handle)));
+    }
+
+    @Override
     public String listSettingsJson() {
         return withOpenHandle(() -> NativeQueue.listSettings(handle));
     }

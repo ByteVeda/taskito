@@ -232,6 +232,27 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listSettin
     })
 }
 
+/// `String effectiveRetention(long handle)` — the retention windows the elected
+/// cleaner last published for this queue's namespace as a JSON document, or
+/// `null` if no worker has swept yet. See `BINDING_CONTRACT.md`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_effectiveRetention<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        match taskito_core::scheduler::retention::read_effective_retention_json(
+            &queue.storage,
+            queue.namespace.as_deref(),
+        )? {
+            Some(json) => new_string(env, json),
+            None => Ok(std::ptr::null_mut()),
+        }
+    })
+}
+
 /// `String replayJob(long handle, String jobId)` — re-enqueue a copy of an
 /// existing job and record it in the replay history. Returns the new job id.
 #[no_mangle]

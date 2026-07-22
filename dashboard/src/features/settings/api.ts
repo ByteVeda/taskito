@@ -1,8 +1,12 @@
 import { api } from "@/lib/api-client";
-import type { SettingsSnapshot } from "./types";
+import type { RetentionSnapshot, SettingsSnapshot } from "./types";
 
 export function fetchSettings(signal?: AbortSignal): Promise<SettingsSnapshot> {
   return api.get<SettingsSnapshot>("/api/settings", { signal });
+}
+
+export function fetchRetention(signal?: AbortSignal): Promise<RetentionSnapshot> {
+  return api.get<RetentionSnapshot>("/api/retention", { signal });
 }
 
 export interface SettingResponse {
