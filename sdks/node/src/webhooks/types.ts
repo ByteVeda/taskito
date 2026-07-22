@@ -15,7 +15,7 @@ export interface WebhookInput {
   enabled?: boolean;
   maxRetries?: number;
   timeoutMs?: number;
-  /** Retry backoff base, in seconds: attempt N waits `retryBackoff ** N`. */
+  /** Retry backoff base, in seconds: the Nth wait (counted from zero) is `retryBackoff ** N`. */
   retryBackoff?: number;
 }
 
@@ -31,7 +31,7 @@ export interface Webhook {
   enabled: boolean;
   maxRetries: number;
   timeoutMs: number;
-  /** Retry backoff base, in seconds: attempt N waits `retryBackoff ** N`. */
+  /** Retry backoff base, in seconds: the Nth wait (counted from zero) is `retryBackoff ** N`. */
   retryBackoff: number;
   createdAt: number;
   updatedAt: number;
