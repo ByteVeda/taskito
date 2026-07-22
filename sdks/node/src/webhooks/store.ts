@@ -255,18 +255,26 @@ export class WebhookStore {
     }
     const known = new Set(webhooks.map((webhook) => webhook.id));
     const merged = [...webhooks];
+    let migrated = 0;
     for (const [, value] of legacyKeys) {
       const webhook = decodeLegacy(value);
       if (webhook && !known.has(webhook.id)) {
         known.add(webhook.id);
         merged.push(webhook);
+        migrated += 1;
       }
     }
     this.save(merged);
     for (const [key] of legacyKeys) {
       this.native.deleteSetting(key);
     }
-    log.info(() => `migrated ${legacyKeys.length} webhook record(s) to ${SUBSCRIPTIONS_KEY}`);
+    // Legacy keys are dropped either way; a record already present under its
+    // canonical id (or undecodable) is retired, not re-merged — so report the
+    // number actually folded in, not the number of keys seen.
+    log.info(
+      () =>
+        `migrated ${migrated} of ${legacyKeys.length} webhook record(s) to ${SUBSCRIPTIONS_KEY}`,
+    );
     return merged;
   }
 }
