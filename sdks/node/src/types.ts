@@ -132,9 +132,12 @@ export interface TaskOptions {
    * failures (a malformed payload, a 4xx) that no amount of retrying fixes.
    * Unset retries everything, as does a predicate that throws.
    *
-   * Synchronous by design: the job cannot settle until it answers. Applies to
-   * errors the handler throws — a timeout is detected outside the handler and
-   * always consumes a retry.
+   * Synchronous by design: the job cannot settle until it answers. It sees
+   * every error raised while running the task, not only the handler's: a
+   * `before`/`after` middleware hook or result serialization can fail too, so a
+   * whitelist predicate dead-letters those as well. Payload decoding fails
+   * earlier and always retries, as does a timeout (detected outside the
+   * handler).
    */
   retryOn?: (error: unknown) => boolean;
   /** Per-job timeout default (ms); enforced by the worker. */

@@ -229,6 +229,11 @@ runs on the worker that caught the error, so it sees the live `Error` object,
 not just its type name. One that throws is treated as `true`: a broken
 classifier must not silently turn transient failures into dead letters.
 
+It sees every error raised while running the task, not only the handler's: a
+`before`/`after` middleware hook or result serialization can fail too, and a
+whitelist like the first example above dead-letters those as well. Payload
+decoding fails earlier and always retries, as does a timeout.
+
 </SdkOnly>
 
 <SdkOnly sdk="java">
@@ -258,6 +263,11 @@ Unlike the backoff curve, the predicate never reaches the scheduler — it runs
 on the worker that caught the exception, so it sees the live `Throwable`. One
 that throws is treated as `true`: a broken classifier must not silently turn
 transient failures into dead letters.
+
+It sees every exception raised while running the task, not only the handler's:
+`before`/`after` middleware, payload decoding and result serialization can fail
+too, and a whitelist like the first example above dead-letters those as well. A
+timeout is detected outside the handler and always retries.
 
 </SdkOnly>
 

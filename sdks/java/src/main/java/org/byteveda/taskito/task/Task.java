@@ -128,8 +128,11 @@ public final class Task<T> {
      * so does a predicate that itself throws.
      *
      * <p>Evaluated by the worker that ran the handler, so unlike the backoff curve
-     * it never reaches the scheduler. It sees exceptions the handler threw; a
-     * timeout is detected outside the handler and always consumes a retry.
+     * it never reaches the scheduler. It sees every exception raised while running
+     * the task, not only the handler's: {@code before}/{@code after} middleware,
+     * payload decoding and result serialization can fail too, so a whitelist
+     * predicate dead-letters those as well. A timeout is detected outside the
+     * handler and always consumes a retry.
      */
     public Task<T> retryOn(Predicate<Throwable> retryOn) {
         return new Task<>(
