@@ -33,8 +33,34 @@ try {
 | `ProxyException` | `TaskitoException` | A proxy reference couldn't be created or reconstructed — no handler, signature mismatch, allowlist violation. |
 | `WebhookException` | `TaskitoException` | A webhook couldn't be stored, loaded, signed, or encoded. |
 | `WorkflowException` | `TaskitoException` | Workflow definition, submission, await-timeout, or query error. |
+| `RetryableException` | `TaskitoException` | *You* throw it from a handler: this failure is transient, retry it. |
+| `NonRetryableException` | `TaskitoException` | *You* throw it from a handler: this failure is permanent, dead-letter it. |
 
 Handler exceptions are different: an exception thrown *inside* a
 `TaskFunction` isn't rethrown to you — it fails that attempt, and the core
 retries with the task's backoff until the retry budget is spent, then
 dead-letters the job. Inspect those via `jobErrors(id)` and `listDead`.
+
+## Signalling retry intent
+
+The last two rows above travel the other way — a handler throws them to
+classify its own failure, overriding the task's `retryOn` predicate:
+
+```java
+queue.worker().handle(CHARGE, (Order order) -> {
+    Response response = gateway.charge(order);
+    if (response.status() == 402) {
+        throw new NonRetryableException("card declined"); // dead-letters now
+    }
+    if (response.status() >= 500) {
+        throw new RetryableException("gateway " + response.status()); // spends the budget
+    }
+    return response.body();
+});
+```
+
+Both are honoured through the cause chain, so a signal wrapped by framework
+code still counts; when a chain carries both, the outermost wins. Any other
+exception is classified by the task's [`retryOn`
+predicate](/java/guides/reliability/retries#exception-filtering), and retries
+when there is none.

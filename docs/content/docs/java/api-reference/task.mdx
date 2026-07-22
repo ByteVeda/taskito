@@ -29,7 +29,7 @@ enqueue options. The fluent option methods each return a new descriptor.
 | `timeoutMs(long)` / `timeout(Duration)` | Per-attempt timeout. |
 | `delayMs(long)` / `delay(Duration)` | Schedule after a delay. |
 | `retryPolicy(RetryPolicy)` | Backoff curve — registered with the worker on `start()`. |
-| `retryOn(Predicate<Throwable>)` | Classifies a thrown exception; `false` dead-letters it immediately. |
+| `retryOn(Predicate<Throwable>)` | Classifies a thrown exception; `false` dead-letters it immediately. A handler throwing [`RetryableException` / `NonRetryableException`](/java/api-reference/errors#signalling-retry-intent) overrides it. |
 | `codecs(String...)` | Named [payload codecs](/java/api-reference/serializers) applied to this task. |
 | `circuitBreaker(CircuitBreakerConfig)` | Trip the task after repeated failures; the worker registers the breaker on `start()`. |
 | `withOptions(EnqueueOptions)` | Replace the default options wholesale. |

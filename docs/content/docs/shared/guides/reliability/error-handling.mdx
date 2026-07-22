@@ -55,15 +55,32 @@ Task<String> FETCH = Task.of("fetch", String.class)
   </Tab>
 </CodeTabs>
 
-Returning normally is success; an uncaught throw is failure. There's no
-in-task "stop retrying" signal from inside a failing attempt — set retries
-to `0` for a fire-once task.
+Returning normally is success; an uncaught throw is failure.
+
+<SdkOnly sdk="python">
+
+There's no in-task "stop retrying" signal from inside a failing attempt — set
+retries to `0` for a fire-once task.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no in-task "stop retrying" signal from inside a failing attempt — set
+retries to `0` for a fire-once task.
+
+</SdkOnly>
 
 <SdkOnly sdk="java">
 
 `TaskFunction` declares `throws Exception`, so checked exceptions propagate
 without wrapping. `maxRetries` defaults to `0` — never retry — so a fresh
 task is fire-once until you opt into retries.
+
+A failing attempt can also decide for itself: throwing `NonRetryableException`
+dead-letters the job immediately, `RetryableException` insists on a retry. See
+[Typed signals from the
+handler](/java/guides/reliability/retries#typed-signals-from-the-handler).
 
 </SdkOnly>
 
