@@ -227,6 +227,7 @@ public final class Worker implements AutoCloseable {
         private AutoscaleOptions autoscale;
         private MeshOptions mesh;
         private Retention retention;
+        private boolean pushDispatch;
 
         Builder(
                 QueueBackend backend,
@@ -350,6 +351,18 @@ public final class Worker implements AutoCloseable {
         /** Per-table retention windows for auto-cleanup. */
         public Builder retention(Retention retention) {
             this.retention = retention;
+            return this;
+        }
+
+        /**
+         * Opt into event-driven dispatch: an enqueue wakes the scheduler
+         * immediately instead of it waiting for the next poll, removing the
+         * dispatch latency floor and the idle database load of polling.
+         * Requires the native library to be built with the {@code push-dispatch}
+         * cargo feature; otherwise accepted and ignored (polling is kept).
+         */
+        public Builder pushDispatch(boolean pushDispatch) {
+            this.pushDispatch = pushDispatch;
             return this;
         }
 
@@ -535,6 +548,12 @@ public final class Worker implements AutoCloseable {
             // option (recommended defaults). Do NOT change to a non-empty check.
             if (retention != null) {
                 options.put("retention", retention.toMap());
+            }
+            // Only when asked: the binding's default is polling, so omitting the
+            // key keeps the wire shape unchanged for every worker that never
+            // touches this knob.
+            if (pushDispatch) {
+                options.put("pushDispatch", true);
             }
             try {
                 return JSON.writeValueAsString(options);
