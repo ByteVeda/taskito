@@ -1,10 +1,11 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
-import { deleteSetting, fetchSettings, setSetting } from "./api";
+import { deleteSetting, fetchRetention, fetchSettings, setSetting } from "./api";
 import type { SettingsSnapshot } from "./types";
 
 const KEY = ["settings"] as const;
+const RETENTION_KEY = ["retention"] as const;
 
 /**
  * Return a user-friendly error description.
@@ -29,6 +30,17 @@ export function settingsQuery() {
 
 export function useSettings() {
   return useQuery(settingsQuery());
+}
+
+export function retentionQuery() {
+  return queryOptions({
+    queryKey: RETENTION_KEY,
+    queryFn: ({ signal }) => fetchRetention(signal),
+  });
+}
+
+export function useRetention() {
+  return useQuery(retentionQuery());
 }
 
 interface UpdateInput {

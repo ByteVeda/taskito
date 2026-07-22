@@ -6,12 +6,18 @@ import {
   ExternalLinksSection,
   IntegrationsSection,
   RefreshIntervalSection,
+  RetentionSection,
+  retentionQuery,
   settingsQuery,
   useSettings,
 } from "@/features/settings";
 
 export const Route = createFileRoute("/settings")({
-  loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(settingsQuery()),
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.ensureQueryData(settingsQuery()),
+      queryClient.ensureQueryData(retentionQuery()),
+    ]),
   component: SettingsPage,
 });
 
@@ -23,7 +29,7 @@ function SettingsPage() {
       <PageHeader
         eyebrow="Configuration"
         title="Settings"
-        description="Branding, dashboard behaviour, integrations, and quick links — shared across every worker."
+        description="Branding, dashboard behaviour, retention, integrations, and quick links — shared across every worker."
       />
 
       {isLoading || !data ? (
@@ -42,6 +48,7 @@ function SettingsPage() {
         <div className="flex flex-col gap-[var(--gap)]">
           <BrandingSection settings={data} />
           <RefreshIntervalSection />
+          <RetentionSection />
           <IntegrationsSection settings={data} />
           <ExternalLinksSection settings={data} />
         </div>

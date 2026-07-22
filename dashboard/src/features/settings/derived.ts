@@ -1,7 +1,12 @@
 import { useEffect } from "react";
 import { site } from "@/lib/site";
 import { useSettings } from "./hooks";
-import { type ExternalLink, type IntegrationUrls, SETTING_KEYS } from "./types";
+import {
+  type ExternalLink,
+  type IntegrationUrls,
+  type RetentionWindows,
+  SETTING_KEYS,
+} from "./types";
 
 /**
  * Whether a configured URL may safely become an ``href``. Allows http(s)
@@ -126,4 +131,60 @@ export function useApplyAccent(): void {
     root.style.setProperty("--ring", `color-mix(in oklch, ${value} 45%, transparent)`);
     return clear;
   }, [value]);
+}
+
+/**
+ * The history tables auto-cleanup purges, ordered the way an operator reads
+ * them: shortest-lived first, the dead-letter queue last. Each row explains
+ * what disappears from which page when its window elapses.
+ */
+export const RETENTION_TABLES: ReadonlyArray<{
+  key: keyof RetentionWindows;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "task_logs_ttl_ms",
+    label: "Task logs",
+    description: "Per-job log lines shown on the Logs page and job detail.",
+  },
+  {
+    key: "archived_jobs_ttl_ms",
+    label: "Archived jobs",
+    description: "Finished jobs of every terminal status — what job detail reads after completion.",
+  },
+  {
+    key: "job_errors_ttl_ms",
+    label: "Job errors",
+    description: "Per-attempt failure records behind a job's error history.",
+  },
+  {
+    key: "task_metrics_ttl_ms",
+    label: "Task metrics",
+    description: "The per-run timings the Metrics charts aggregate.",
+  },
+  {
+    key: "dead_letter_ttl_ms",
+    label: "Dead letters",
+    description: "The only copy of a failed job's payload — deliberately kept longest.",
+  },
+];
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * A retention window as an operator-readable age. ``null`` is "kept forever"
+ * (no window), which is not the same as a zero window — that purges a row as
+ * soon as the cleaner sees it.
+ */
+export function formatRetentionWindow(ms: number | null): string {
+  if (ms === null) return "Kept forever";
+  if (ms <= 0) return "Purged immediately";
+  const plural = (value: number, unit: string) => `${value} ${unit}${value === 1 ? "" : "s"}`;
+  if (ms % DAY_MS === 0) return plural(ms / DAY_MS, "day");
+  if (ms % HOUR_MS === 0) return plural(ms / HOUR_MS, "hour");
+  if (ms % MINUTE_MS === 0) return plural(ms / MINUTE_MS, "minute");
+  return plural(Math.round(ms / 1000), "second");
 }

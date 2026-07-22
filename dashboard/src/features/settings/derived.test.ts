@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyJobContext, isSafeLinkUrl, parseExternalLinks } from "./derived";
+import {
+  applyJobContext,
+  formatRetentionWindow,
+  isSafeLinkUrl,
+  parseExternalLinks,
+} from "./derived";
 
 describe("isSafeLinkUrl", () => {
   it("allows http and https URLs", () => {
@@ -117,5 +122,25 @@ describe("applyJobContext", () => {
 
   it("handles an empty job id", () => {
     expect(applyJobContext("/jobs/{job_id}", "")).toBe("/jobs/");
+  });
+});
+
+describe("formatRetentionWindow", () => {
+  it("renders whole days, hours, and minutes in the largest exact unit", () => {
+    expect(formatRetentionWindow(7 * 86_400_000)).toBe("7 days");
+    expect(formatRetentionWindow(86_400_000)).toBe("1 day");
+    expect(formatRetentionWindow(12 * 3_600_000)).toBe("12 hours");
+    expect(formatRetentionWindow(90 * 60_000)).toBe("90 minutes");
+  });
+
+  it("falls back to seconds for windows that divide no larger unit", () => {
+    expect(formatRetentionWindow(90_000)).toBe("90 seconds");
+    expect(formatRetentionWindow(1_500)).toBe("2 seconds");
+  });
+
+  it("distinguishes no window from a zero window", () => {
+    // null = the table is never swept; 0 = purged as soon as the cleaner sees it.
+    expect(formatRetentionWindow(null)).toBe("Kept forever");
+    expect(formatRetentionWindow(0)).toBe("Purged immediately");
   });
 });
