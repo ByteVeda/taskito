@@ -89,6 +89,7 @@ export const routes: Route[] = [
     handle: (q) => h.purgeDeadLetters(q),
   },
   { method: "GET", pattern: /^\/api\/settings$/, handle: (q) => h.listSettings(q) },
+  { method: "GET", pattern: /^\/api\/retention$/, handle: (q) => h.retention(q) },
   {
     method: "GET",
     pattern: /^\/api\/settings\/(.+)$/,

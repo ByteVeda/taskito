@@ -227,4 +227,16 @@ impl JsQueue {
     pub fn list_settings(&self) -> Result<HashMap<String, String>> {
         self.storage.list_settings().map_err(to_napi_err)
     }
+
+    /// The retention windows the elected cleaner last published for this
+    /// queue's namespace, as a JSON document, or `null` if no worker has swept
+    /// yet. See `BINDING_CONTRACT.md`.
+    #[napi]
+    pub fn effective_retention(&self) -> Result<Option<String>> {
+        taskito_core::scheduler::retention::read_effective_retention_json(
+            &self.storage,
+            self.namespace.as_deref(),
+        )
+        .map_err(to_napi_err)
+    }
 }
