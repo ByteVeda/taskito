@@ -35,6 +35,7 @@ import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.EffectiveRetention;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
@@ -675,6 +676,11 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public Optional<String> getSetting(String key) {
         return backend.getSetting(key);
+    }
+
+    @Override
+    public Optional<EffectiveRetention> effectiveRetention() {
+        return backend.effectiveRetentionJson().map(json -> decode(json, EffectiveRetention.class));
     }
 
     @Override

@@ -6,6 +6,7 @@ import java.util.stream.Collectors;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DagEdge;
 import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.EffectiveRetention;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.QueueStats;
@@ -213,6 +214,29 @@ final class Contract {
         Map<String, Object> masked = new LinkedHashMap<>();
         headers.forEach((name, value) -> masked.put(name, "***"));
         return masked;
+    }
+
+    /**
+     * The published retention policy, or the unreported state when {@code r} is
+     * null. {@code reported} is distinct from {@code enabled}: no worker has
+     * swept yet, which is not the same as retention being switched off.
+     */
+    static Map<String, Object> retention(EffectiveRetention r) {
+        Map<String, Object> windows = new LinkedHashMap<>();
+        windows.put("task_logs_ttl_ms", r == null ? null : r.windows.taskLogsMs);
+        windows.put("archived_jobs_ttl_ms", r == null ? null : r.windows.archivedJobsMs);
+        windows.put("job_errors_ttl_ms", r == null ? null : r.windows.jobErrorsMs);
+        windows.put("task_metrics_ttl_ms", r == null ? null : r.windows.taskMetricsMs);
+        windows.put("dead_letter_ttl_ms", r == null ? null : r.windows.deadLetterMs);
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("reported", r != null);
+        m.put("enabled", r != null && r.enabled);
+        m.put("defaulted", r != null && r.defaulted);
+        m.put("namespace", r == null ? null : r.namespace);
+        m.put("reported_at", r == null ? null : r.reportedAt);
+        m.put("windows", windows);
+        return m;
     }
 
     static Map<String, Object> workflowNode(NodeSnapshot n) {

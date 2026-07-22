@@ -131,6 +131,15 @@ public interface QueueBackend extends AutoCloseable {
 
     String listSettingsJson();
 
+    /**
+     * The retention windows the elected cleaner last published for this queue's
+     * namespace, as JSON, or empty when no worker has swept yet. Defaults to
+     * empty for backends that do not report one.
+     */
+    default Optional<String> effectiveRetentionJson() {
+        return Optional.empty();
+    }
+
     // ── Logs ────────────────────────────────────────────────────────
     void writeTaskLog(String jobId, String taskName, String level, String message, String extraOrNull);
 

@@ -24,6 +24,7 @@ import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.EffectiveRetention;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
@@ -289,6 +290,15 @@ public interface Taskito extends AutoCloseable {
     boolean deleteSetting(String key);
 
     Map<String, String> listSettings();
+
+    /**
+     * The retention windows a worker is applying to this queue's namespace, or
+     * empty when no worker has swept yet — distinct from retention being
+     * disabled, which reports with {@code enabled = false}.
+     *
+     * @return the published policy, or empty if unreported
+     */
+    Optional<EffectiveRetention> effectiveRetention();
 
     // ── Middleware toggles ──────────────────────────────────────────
 
