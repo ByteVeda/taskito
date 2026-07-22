@@ -149,7 +149,16 @@ pub fn read_effective_retention<S: Storage>(
     let Some(raw) = storage.get_setting(&retention_setting_key(namespace))? else {
         return Ok(None);
     };
-    Ok(serde_json::from_str(&raw).ok())
+    // Unparseable reads as unreported, but say so: during a rolling upgrade that
+    // is a schema mismatch, not "no leader has swept yet".
+    Ok(serde_json::from_str(&raw)
+        .inspect_err(|error| {
+            log::warn!(
+                "published retention document for {} is unparseable: {error}",
+                namespace.unwrap_or(DEFAULT_NAMESPACE)
+            )
+        })
+        .ok())
 }
 
 /// The published document for `namespace` as JSON, re-encoded from the parsed
