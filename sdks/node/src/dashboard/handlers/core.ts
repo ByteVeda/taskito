@@ -255,6 +255,7 @@ function parseWebhookInput(body: unknown): Partial<WebhookInput> {
   if (typeof raw.enabled === "boolean") input.enabled = raw.enabled;
   if (typeof raw.max_retries === "number") input.maxRetries = raw.max_retries;
   if (typeof raw.timeout_seconds === "number") input.timeoutMs = raw.timeout_seconds * 1000;
+  if (typeof raw.retry_backoff === "number") input.retryBackoff = raw.retry_backoff;
   return input;
 }
 

@@ -209,6 +209,26 @@ itself must match it.
 key `evt-42`, topic `orders`, subscription `email` →
 `evt-42::6:5:ordersemail`.
 
+## Webhook subscriptions (cross-SDK)
+Webhook delivery is a shell concern, but the subscriptions live in the shared
+settings KV store, so a queue driven by more than one shell must agree on the
+layout or each shell sees only its own hooks.
+
+- **Key** `webhooks:subscriptions` — a single JSON **array** holding every
+  subscription. Not one key per hook.
+- **Row fields** (snake_case; timestamps Unix ms; timeout in **seconds**):
+  `id`, `url`, `events[]` (empty = all), `task_filter` (`null` = all tasks),
+  `headers{}`, `secret` (`null` = unsigned), `max_retries`, `timeout_seconds`,
+  `retry_backoff`, `enabled`, `description`, `created_at`, `updated_at`.
+- **Retry curve**: the Nth wait is `retry_backoff ** N` seconds, N counted from
+  zero — default `2.0` gives 1s, 2s, 4s.
+- **Tolerant reads, lossless writes**: a shell keeps a row whose fields or event
+  names it does not model, and MUST carry those fields through when it rewrites
+  the array — every mutation rewrites the whole list, so dropping them would
+  destroy another shell's configuration.
+- **Delivery log** is separate: key `webhooks:deliveries:<subscription_id>`,
+  one JSON array per subscription, newest last.
+
 ## Types the shell produces / consumes
 - **`Job`** — `job.rs`. Fields incl. `id`, `queue`, `task_name`, `payload: Vec<u8>` (opaque),
   `status`, `priority`, `retry_count`, `max_retries`, `timeout_ms`, `unique_key`,

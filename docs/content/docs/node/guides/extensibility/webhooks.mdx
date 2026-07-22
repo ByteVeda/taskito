@@ -34,6 +34,9 @@ queue.webhooks.delete(hook.id);
 | `events` | Event names to deliver (omit for all). |
 | `secret` | Signs each delivery as `X-Taskito-Signature: sha256=...`. |
 | `taskFilter` | Only deliver for these task names. |
+| `maxRetries` | Extra attempts after the first (default `3`). |
+| `timeoutMs` | Per-attempt timeout (default `10000`). |
+| `retryBackoff` | Backoff base in seconds — the Nth wait is `retryBackoff ** N`, counted from zero (default `2`, so 1s, 2s, 4s). |
 
 Deliveries fire from the **worker process** (where events originate). Verify the
 signature on your endpoint by HMAC-ing the raw body with the shared secret.
@@ -73,5 +76,7 @@ for (const delivery of queue.webhooks.deliveries(hook.id)) {
   The [dashboard](/node/guides/operations/dashboard) exposes `/api/webhooks` for
   managing hooks, and the same delivery log — paged and in snake_case — at
   [`/api/webhooks/:id/deliveries`](/node/guides/operations/dashboard-api).
-  Webhook subscriptions are persisted in storage and survive restarts.
+  Webhook subscriptions are persisted in storage and survive restarts. They use
+  the cross-SDK layout (a JSON list under the `webhooks:subscriptions` setting),
+  so hooks registered against a queue by any SDK are visible to all of them.
 </Callout>
