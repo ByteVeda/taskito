@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const bindingPath = fileURLToPath(new URL("../native/index.js", import.meta.url));
 const binding = require(bindingPath) as typeof import("../native/index");
 
-export const { JsQueue, JsWorker } = binding;
+export const { JsQueue, JsWorker, reservedSettingPrefixes } = binding;
 
 /** Instance types of the native classes, for typing fields and parameters. */
 export type NativeQueue = InstanceType<typeof JsQueue>;

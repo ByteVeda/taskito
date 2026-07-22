@@ -26,12 +26,23 @@ fn _init_rust_logging() {
     let _ = pyo3_log::try_init();
 }
 
+/// Settings-key prefixes the dashboard's generic KV surface must hide. Sourced
+/// from the core so every shell hides the same keys.
+#[pyfunction]
+fn reserved_setting_prefixes() -> Vec<String> {
+    taskito_core::RESERVED_SETTING_PREFIXES
+        .iter()
+        .map(|prefix| (*prefix).to_string())
+        .collect()
+}
+
 // `gil_used = true`: this extension relies on the GIL for its shared mutable
 // state (scheduler, workflow tracker). Until that state is audited for the
 // free-threaded build, advertise GIL dependence so 3.13t/3.14t fall back safely.
 #[pymodule(gil_used = true)]
 fn _taskito(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_init_rust_logging, m)?)?;
+    m.add_function(wrap_pyfunction!(reserved_setting_prefixes, m)?)?;
     m.add_class::<PyQueue>()?;
     m.add_class::<PyJob>()?;
     m.add_class::<PyTaskConfig>()?;

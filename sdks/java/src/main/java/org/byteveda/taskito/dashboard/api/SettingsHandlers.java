@@ -6,21 +6,21 @@ import java.util.Map;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
 import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.byteveda.taskito.dashboard.support.Json;
+import org.byteveda.taskito.internal.NativeQueue;
 
 /**
- * Generic settings KV API. Keys under the reserved prefixes ({@code auth:},
- * {@code webhooks:}, {@code retention:}) are treated as absent everywhere — never listed, read,
- * written, or deleted through this surface — so auth and webhook state cannot be
- * exposed or clobbered. Keys are capped at 256 chars, values at 64 KiB.
+ * Generic settings KV API. Keys under the core's reserved prefixes ({@code auth:},
+ * {@code webhooks:}, {@code retention:}, …) are treated as absent everywhere — never
+ * listed, read, written, or deleted through this surface — so auth state, webhooks, and
+ * published runtime documents cannot be exposed or clobbered. Keys are capped at 256
+ * chars, values at 64 KiB.
  */
 public final class SettingsHandlers {
     static final int MAX_KEY_LENGTH = 256;
     static final int MAX_VALUE_LENGTH = 64 * 1024;
-    // Hide auth state, the webhook store (persisted under the "taskito.webhooks"
-    // key), and the retention windows the cleaner publishes — a report of what
-    // the worker does, not a knob.
-    private static final List<String> PROTECTED_PREFIXES =
-            List.of("auth:", "webhooks:", "taskito.webhooks", "retention:");
+    // Auth state, the webhook store, and the retention windows the cleaner
+    // publishes. The list comes from the core so every shell hides the same keys.
+    private static final List<String> PROTECTED_PREFIXES = List.of(NativeQueue.reservedSettingPrefixes());
 
     private final SettingsAccess settings;
 

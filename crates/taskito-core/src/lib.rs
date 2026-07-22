@@ -12,6 +12,8 @@ pub mod pubsub;
 pub mod resilience;
 /// The [`Scheduler`]: job dispatch, retries, maintenance, retention.
 pub mod scheduler;
+/// Reserved settings-key prefixes: the namespaces the runtime owns.
+pub mod settings;
 /// The [`Storage`] trait, backend implementations, and shared records.
 pub mod storage;
 /// Native worker: task registry, dispatcher trait, worker runner.
@@ -29,6 +31,7 @@ pub use scheduler::retention::{EffectiveRetention, RetentionConfig};
 pub use scheduler::{
     JobResult, QueueConfig, ResultOutcome, Scheduler, SchedulerConfig, TaskConfig,
 };
+pub use settings::{is_reserved_setting_key, RESERVED_SETTING_PREFIXES};
 pub use storage::cursor::Page;
 #[cfg(feature = "postgres")]
 pub use storage::postgres::PostgresStorage;

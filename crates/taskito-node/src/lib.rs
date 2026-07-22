@@ -15,3 +15,13 @@ mod worker;
 
 pub use queue::JsQueue;
 pub use worker::JsWorker;
+
+/// Settings-key prefixes the dashboard's generic KV surface must hide. Sourced
+/// from the core so every shell hides the same keys.
+#[napi_derive::napi]
+pub fn reserved_setting_prefixes() -> Vec<String> {
+    taskito_core::RESERVED_SETTING_PREFIXES
+        .iter()
+        .map(|prefix| (*prefix).to_string())
+        .collect()
+}
