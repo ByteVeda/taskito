@@ -255,6 +255,7 @@ export class Worker {
       resources: resources.isEmpty ? undefined : resources.names,
       mesh: run?.mesh,
       retention: run?.retention,
+      pushDispatch: run?.pushDispatch,
     };
     const native = queue.runWorker(taskCallback, outcomeCallback, nativeOptions);
     // Lease the shared resource runtime only once the native worker actually

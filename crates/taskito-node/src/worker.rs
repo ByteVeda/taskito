@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{spawn, spawn_blocking, Result};
+use napi::bindgen_prelude::{spawn, spawn_blocking, within_runtime_if_available, Result};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use taskito_core::worker::WorkerDispatcher;
@@ -139,6 +139,13 @@ pub fn start_worker(
         scheduler.register_queue_config(input.name.clone(), crate::convert::queue_config(input)?);
     }
     let scheduler = Arc::new(scheduler);
+    // Push-dispatch: swap polling for enqueue-driven wakeups before any loop
+    // below takes the source. We are on the JS thread here, so enter the napi
+    // runtime — the Postgres and Redis wake sources spawn a listener task.
+    // Without the `push-dispatch` build feature this logs and keeps polling.
+    if options.push_dispatch.unwrap_or(false) {
+        within_runtime_if_available(|| scheduler.enable_push_dispatch());
+    }
     let shutdown = scheduler.shutdown_handle();
 
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(capacity);

@@ -17,6 +17,9 @@ postgres = ["taskito-core/postgres", "taskito-workflows?/postgres"]
 redis = ["taskito-core/redis", "taskito-workflows?/redis"]
 mesh = ["dep:taskito-mesh"]
 workflows = ["dep:taskito-workflows"]
+# Event-driven scheduler wakeups. OFF by default (not in the shipped addon's
+# feature list); `pushDispatch` is accepted and ignored without it.
+push-dispatch = ["taskito-core/push-dispatch"]
 
 [dependencies]
 taskito-core = { path = "../taskito-core" }
