@@ -584,7 +584,42 @@ itself for branding, external links, and integration URLs — but you
 can write your own keys here too. Note that this is the same store
 where authentication, webhook subscriptions, delivery logs, and
 runtime overrides live, all under namespaced prefixes (`auth:*`,
-`webhooks:*`, `overrides:*`, etc.).
+`webhooks:*`, `overrides:*`, etc.). The reserved prefixes (`auth:`,
+`webhooks:`, `retention:`) read as absent here and cannot be written.
+
+## Retention
+
+### `GET /api/retention`
+
+The retention windows a worker is applying to this queue's namespace — what
+the Settings page echoes to explain why rows leave the listings.
+
+```json
+{
+  "reported": true,
+  "enabled": true,
+  "defaulted": true,
+  "namespace": "default",
+  "reported_at": 1753200000000,
+  "windows": {
+    "task_logs_ttl_ms": 259200000,
+    "archived_jobs_ttl_ms": 604800000,
+    "job_errors_ttl_ms": 604800000,
+    "task_metrics_ttl_ms": 604800000,
+    "dead_letter_ttl_ms": 2592000000
+  }
+}
+```
+
+Retention runs in the worker process, so this is not computed from the
+dashboard's own config: the worker elected to run cleanup publishes its
+windows on each sweep. `reported: false` means no worker has swept yet —
+the policy is unknown, which is not the same as retention being off
+(`enabled: false`). A `null` window keeps that table forever.
+
+Read-only. The published document lives under the reserved `retention:`
+settings prefix, so it is neither listed nor writable through
+`/api/settings`.
 
 ## Using the API programmatically
 
