@@ -9,6 +9,7 @@ from typing import Any
 from taskito.mixins._shared import _UNSET
 from taskito.pagination import Page
 from taskito.result import JobResult
+from taskito.retention import EffectiveRetention
 
 
 class QueueInspectionMixin:
@@ -261,6 +262,19 @@ class QueueInspectionMixin:
     def purge_completed(self, older_than: int = 86400) -> int:
         """Delete completed jobs older than a given age."""
         return self._inner.purge_completed(older_than)  # type: ignore[no-any-return]
+
+    def effective_retention(self) -> EffectiveRetention | None:
+        """The retention windows a worker is applying to this namespace.
+
+        Reported by the elected cleaner on each sweep, so it reflects the
+        worker's configuration rather than this process's. ``None`` means no
+        worker has swept yet — distinct from retention being disabled, which
+        reports with ``enabled=False``.
+        """
+        raw = self._inner.effective_retention()
+        if raw is None:
+            return None
+        return EffectiveRetention._from_json(raw)
 
 
 def _aggregate_metrics(raw: list[dict]) -> dict[str, Any]:
