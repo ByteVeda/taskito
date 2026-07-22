@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from taskito.context import LogLevel
     from taskito.pagination import Page
     from taskito.result import JobResult
+    from taskito.retention import EffectiveRetention
 
 logger = logging.getLogger("taskito")
 
@@ -128,6 +129,7 @@ class AsyncQueueMixin:
         def pause(self, queue_name: str = ...) -> None: ...
         def resume(self, queue_name: str = ...) -> None: ...
         def paused_queues(self) -> list[str]: ...
+        def effective_retention(self) -> EffectiveRetention | None: ...
         def resource_status(self) -> list[dict[str, Any]]: ...
         def reload_resources(self, names: list[str] | None = ...) -> dict[str, bool]: ...
 
@@ -290,6 +292,10 @@ class AsyncQueueMixin:
     async def apaused_queues(self) -> list[str]:
         """Async version of :meth:`paused_queues`."""
         return await self._run_sync(self.paused_queues)
+
+    async def aeffective_retention(self) -> EffectiveRetention | None:
+        """Async version of :meth:`effective_retention`."""
+        return await self._run_sync(self.effective_retention)
 
     # -- Locks --
 

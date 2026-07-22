@@ -190,3 +190,10 @@ def test_published_windows_are_not_an_editable_setting(
         with pytest.raises(urllib.error.HTTPError) as write:
             client.put("/api/settings/retention:effective:default", {"value": "{}"})
         assert write.value.code == 400
+
+
+async def test_async_effective_retention(queue: Queue, poll_until: PollUntil) -> None:
+    with _worker_that_published(queue, poll_until):
+        snapshot = await queue.aeffective_retention()
+        assert snapshot is not None
+        assert snapshot.enabled
