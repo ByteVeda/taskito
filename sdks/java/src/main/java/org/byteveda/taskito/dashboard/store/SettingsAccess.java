@@ -1,8 +1,10 @@
 package org.byteveda.taskito.dashboard.store;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.internal.NativeQueue;
 
 /**
  * Narrow view of the {@code dashboard_settings} KV store — the single
@@ -22,6 +24,16 @@ public interface SettingsAccess {
 
     /** All settings; callers filter by key prefix. */
     Map<String, String> listSettings();
+
+    /**
+     * Key prefixes the generic settings API must treat as absent (auth state,
+     * webhooks, runtime-published documents). Comes from the core so every shell
+     * hides the same keys; resolved on call, not on class load, so an in-memory
+     * store can answer without the native library.
+     */
+    default List<String> reservedPrefixes() {
+        return List.of(NativeQueue.reservedSettingPrefixes());
+    }
 
     static SettingsAccess of(Taskito queue) {
         return new SettingsAccess() {

@@ -6,7 +6,6 @@ import java.util.Map;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
 import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.byteveda.taskito.dashboard.support.Json;
-import org.byteveda.taskito.internal.NativeQueue;
 
 /**
  * Generic settings KV API. Keys under the core's reserved prefixes ({@code auth:},
@@ -18,14 +17,16 @@ import org.byteveda.taskito.internal.NativeQueue;
 public final class SettingsHandlers {
     static final int MAX_KEY_LENGTH = 256;
     static final int MAX_VALUE_LENGTH = 64 * 1024;
-    // Auth state, the webhook store, and the retention windows the cleaner
-    // publishes. The list comes from the core so every shell hides the same keys.
-    private static final List<String> PROTECTED_PREFIXES = List.of(NativeQueue.reservedSettingPrefixes());
 
     private final SettingsAccess settings;
+    // Auth state, the webhook store, and the retention windows the cleaner
+    // publishes. The store hands over the core's list, so every shell hides the
+    // same keys and this class never touches the native library itself.
+    private final List<String> protectedPrefixes;
 
     public SettingsHandlers(SettingsAccess settings) {
         this.settings = settings;
+        this.protectedPrefixes = settings.reservedPrefixes();
     }
 
     public Object list() {
@@ -70,11 +71,11 @@ public final class SettingsHandlers {
         return m;
     }
 
-    private static boolean isProtected(String key) {
-        return PROTECTED_PREFIXES.stream().anyMatch(key::startsWith);
+    private boolean isProtected(String key) {
+        return protectedPrefixes.stream().anyMatch(key::startsWith);
     }
 
-    private static void validateKey(String key) {
+    private void validateKey(String key) {
         if (key == null || key.isEmpty() || key.length() > MAX_KEY_LENGTH) {
             throw DashboardError.badRequest("invalid setting key");
         }
