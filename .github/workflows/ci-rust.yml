@@ -81,6 +81,14 @@ jobs:
       - name: Check build with mesh feature
         run: cargo check --workspace --features mesh
 
+      # Off in every shipped artifact, so only CI keeps the three binding
+      # shells' push-dispatch wiring compiling.
+      - name: Run push-dispatch tests
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features push-dispatch
+
+      - name: Check push-dispatch build with the listener-backed backends
+        run: cargo check --workspace --features push-dispatch,postgres,redis
+
   rust-test-postgres:
     name: Rust Tests (PostgreSQL)
     runs-on: ubuntu-latest
