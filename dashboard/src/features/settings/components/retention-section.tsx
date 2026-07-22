@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
   EmptyState,
+  ErrorState,
   Skeleton,
   Table,
   TableBody,
@@ -68,7 +69,7 @@ function WindowTable({ snapshot }: { snapshot: RetentionSnapshot }) {
  * the worker is started.
  */
 export function RetentionSection() {
-  const { data, isLoading } = useRetention();
+  const { data, isLoading, error, refetch } = useRetention();
 
   return (
     <Card>
@@ -85,8 +86,16 @@ export function RetentionSection() {
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-[var(--gap)]">
-        {isLoading || !data ? (
+        {isLoading ? (
           <Skeleton className="h-64 rounded-[var(--card-radius)]" />
+        ) : error || !data ? (
+          // Never a bare skeleton: a failed read must say so and offer a retry,
+          // not spin forever looking like a policy that is still loading.
+          <ErrorState
+            title="Couldn't load the retention windows"
+            description={error instanceof Error ? error.message : "The backend did not respond."}
+            onRetry={() => refetch()}
+          />
         ) : !data.reported ? (
           <EmptyState
             icon={Trash2}

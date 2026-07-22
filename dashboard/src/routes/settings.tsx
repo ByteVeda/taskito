@@ -13,11 +13,14 @@ import {
 } from "@/features/settings";
 
 export const Route = createFileRoute("/settings")({
-  loader: ({ context: { queryClient } }) =>
-    Promise.all([
-      queryClient.ensureQueryData(settingsQuery()),
-      queryClient.ensureQueryData(retentionQuery()),
-    ]),
+  loader: ({ context: { queryClient } }) => {
+    // Retention is one read-only panel: prefetch it best-effort so a backend
+    // that can't report its windows never costs the operator the whole page
+    // (branding, integrations, links). `prefetchQuery` resolves on failure;
+    // the section renders its own error state from the cached rejection.
+    void queryClient.prefetchQuery(retentionQuery());
+    return queryClient.ensureQueryData(settingsQuery());
+  },
   component: SettingsPage,
 });
 
