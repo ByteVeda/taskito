@@ -716,6 +716,19 @@ impl Scheduler {
     /// Cadence of the dedicated maintenance ticker, decoupled from dispatch.
     const PUSH_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(500);
 
+    /// Switch this scheduler from polling to event-driven dispatch, using the
+    /// wake source that matches its storage backend. Call before [`Self::run`],
+    /// from inside a Tokio runtime context (the Postgres and Redis sources
+    /// spawn a listener task).
+    ///
+    /// This is the entry point binding shells call for their `push_dispatch`
+    /// option. It also exists — as a logged no-op — in builds without the
+    /// `push-dispatch` feature, so a shell can offer the option unconditionally
+    /// and degrade to polling.
+    pub fn enable_push_dispatch(&self) {
+        self.set_wake_source(wake::WakeSource::for_storage(&self.storage));
+    }
+
     /// Install the wake source the push loop should consume. Call before
     /// `run()`. With no wake source installed, `run()` keeps polling.
     pub fn set_wake_source(&self, source: wake::WakeSource) {
@@ -815,6 +828,20 @@ impl Scheduler {
                 }
             }
         }
+    }
+}
+
+#[cfg(not(feature = "push-dispatch"))]
+impl Scheduler {
+    /// Stand-in for the push-dispatch build's method, so binding shells can
+    /// expose the option without compiling it in conditionally. Event-driven
+    /// dispatch is not built here, so this logs and leaves the scheduler
+    /// polling — the documented "accepted and ignored" contract.
+    pub fn enable_push_dispatch(&self) {
+        log::debug!(
+            "push dispatch requested but this build lacks the 'push-dispatch' \
+             feature; falling back to polling"
+        );
     }
 }
 
@@ -2651,6 +2678,25 @@ mod push_tests {
             // Only one job existed.
             assert!(job.is_err());
         });
+    }
+
+    /// `enable_push_dispatch` is the one entry point every binding shell uses,
+    /// so it must install a source the enqueue path actually signals. Waiting
+    /// after the enqueue is sound: `notify_one` stores a permit, so the wake
+    /// cannot be lost between the two.
+    #[tokio::test]
+    async fn test_enable_push_dispatch_wakes_on_enqueue() {
+        let scheduler = push_scheduler();
+        scheduler.enable_push_dispatch();
+        let mut wake = scheduler
+            .take_wake_source()
+            .expect("enable_push_dispatch must install a wake source");
+
+        scheduler.storage.enqueue(ready_job("wake_task")).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wake.wait())
+            .await
+            .expect("an enqueued ready job must wake the push loop");
     }
 
     /// `note_scheduled_at` keeps the earliest schedule and clears once due.
