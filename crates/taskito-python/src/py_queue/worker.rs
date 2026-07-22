@@ -462,29 +462,6 @@ impl PyQueue {
             }
         }
 
-        // Push-dispatch: install the in-process wake source the scheduler loop
-        // consumes. SQLite wakes via a shared `Notify` and needs no runtime, so
-        // it is installed here. Channel-based sources (Postgres/Redis) spawn a
-        // listener and are installed inside the runtime below. When the feature
-        // is off, `push_dispatch` is accepted but ignored so the default
-        // constructor keeps polling.
-        #[cfg(feature = "push-dispatch")]
-        if self.push_dispatch {
-            #[allow(irrefutable_let_patterns)]
-            if let taskito_core::storage::StorageBackend::Sqlite(s) = &self.storage {
-                scheduler.set_wake_source(taskito_core::scheduler::wake::WakeSource::InProcess(
-                    s.notify_handle().clone(),
-                ));
-            }
-        }
-        #[cfg(not(feature = "push-dispatch"))]
-        if self.push_dispatch {
-            log::debug!(
-                "push_dispatch=True but the crate was built without the \
-                 'push-dispatch' feature; falling back to polling"
-            );
-        }
-
         let shutdown = scheduler.shutdown_handle();
 
         // Headroom over the in-flight cap, so the cheap pre-claim gate binds before
@@ -591,13 +568,7 @@ impl PyQueue {
         #[cfg(not(feature = "mesh"))]
         let mesh_enabled = false;
 
-        // Captured for the channel-based (Postgres/Redis) wake-source setup
-        // inside the runtime. Gated to the listener-bearing backends so the
-        // default and SQLite-only builds have no unused binding.
-        #[cfg(all(
-            feature = "push-dispatch",
-            any(feature = "postgres", feature = "redis")
-        ))]
+        // Captured for the wake-source install inside the runtime below.
         let push_dispatch_enabled = self.push_dispatch;
 
         // Move result_tx into the runtime — don't keep a copy in the main thread
@@ -616,33 +587,13 @@ impl PyQueue {
             };
 
             rt.block_on(async {
-                // Channel-based wake sources (Postgres/Redis) must spawn their
-                // listener inside the runtime. Installed here, before the
-                // scheduler loop takes the source.
-                #[cfg(feature = "push-dispatch")]
-                {
-                    match scheduler_for_dispatch.storage() {
-                        #[cfg(feature = "postgres")]
-                        taskito_core::storage::StorageBackend::Postgres(s)
-                            if push_dispatch_enabled =>
-                        {
-                            let rx = taskito_core::storage::postgres::listener::spawn(s.clone());
-                            scheduler_for_dispatch.set_wake_source(
-                                taskito_core::scheduler::wake::WakeSource::Channel(rx),
-                            );
-                        }
-                        #[cfg(feature = "redis")]
-                        taskito_core::storage::StorageBackend::Redis(s)
-                            if push_dispatch_enabled =>
-                        {
-                            let rx =
-                                taskito_core::storage::redis_backend::listener::spawn(s.clone());
-                            scheduler_for_dispatch.set_wake_source(
-                                taskito_core::scheduler::wake::WakeSource::Channel(rx),
-                            );
-                        }
-                        _ => {}
-                    }
+                // Push-dispatch: install the wake source before the scheduler
+                // loop takes it. Inside the runtime because the Postgres and
+                // Redis sources spawn a listener task. Without the
+                // `push-dispatch` feature this logs and keeps polling, so
+                // `push_dispatch=True` is accepted and ignored.
+                if push_dispatch_enabled {
+                    scheduler_for_dispatch.enable_push_dispatch();
                 }
 
                 // When mesh is enabled, interpose a local deque between

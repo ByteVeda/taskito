@@ -274,6 +274,14 @@ export interface WorkerRunOptions {
   advanceWorkflows?: boolean;
   /** Per-table retention windows for auto-cleanup. */
   retention?: RetentionOptions;
+  /**
+   * Opt into event-driven dispatch: an enqueue wakes the scheduler immediately
+   * instead of it waiting for the next poll, removing the dispatch latency
+   * floor and the idle database load of polling. Requires the native addon to
+   * be built with the `push-dispatch` cargo feature; otherwise accepted and
+   * ignored (polling is kept).
+   */
+  pushDispatch?: boolean;
 }
 
 /**
