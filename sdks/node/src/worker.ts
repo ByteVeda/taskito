@@ -12,6 +12,7 @@ import type { Middleware, TaskContext } from "./middleware";
 import type {
   JsOutcome,
   JsTaskInvocation,
+  JsTaskOutcome,
   NativeQueue,
   NativeWorker,
   WorkerOptions as NativeWorkerOptions,
@@ -111,11 +112,11 @@ export class Worker {
     // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
     const tracker = (run?.advanceWorkflows ?? true) ? (params.workflowTracker ?? null) : null;
 
-    const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
+    const taskCallback = async (invocation: JsTaskInvocation): Promise<JsTaskOutcome> => {
       // Built-in workflow cache-return: echo the single (cached) arg as the result.
       if (invocation.taskName === CACHE_TASK) {
         const [value] = deserializeCall(serializer, invocation.payload);
-        return Buffer.from(serializer.serialize(value));
+        return { result: Buffer.from(serializer.serialize(value)) };
       }
       const task = tasks.get(invocation.taskName);
       if (!task) {
@@ -186,7 +187,7 @@ export class Worker {
         for (const mw of chain) {
           await mw.after?.(ctx, result);
         }
-        return Buffer.from(serializer.serialize(result));
+        return { result: Buffer.from(serializer.serialize(result)) };
       } catch (error) {
         for (const mw of chain) {
           try {
@@ -195,12 +196,10 @@ export class Worker {
             // onError hooks must not mask the original task failure.
           }
         }
-        // Rethrow as the canonical structured-error JSON. With an empty name,
-        // Error#toString() is just the message, so the native layer stores the
-        // bare JSON object as the job's error string.
-        const structured = new Error(encodeTaskError(error));
-        structured.name = "";
-        throw structured;
+        // Resolve rather than reject: a rejection carries only a string, and the
+        // native layer needs the retry verdict alongside the canonical
+        // structured-error JSON it stores as the job's error.
+        return { error: encodeTaskError(error), retryable: isRetryable(task, error) };
       } finally {
         clearInterval(poller);
         try {
@@ -333,6 +332,24 @@ export class Worker {
     void this.resources.teardownWorker().catch((error) => {
       log.debug(() => "worker-scope resource teardown failed", error);
     });
+  }
+}
+
+/**
+ * Ask a task's `retryOn` predicate whether `error` is worth retrying. No
+ * predicate means retry, and so does one that throws — a broken classifier must
+ * not silently turn transient failures into dead letters.
+ */
+function isRetryable(task: RegisteredTask, error: unknown): boolean {
+  const predicate = task.options?.retryOn;
+  if (!predicate) {
+    return true;
+  }
+  try {
+    return predicate(error);
+  } catch (predicateError) {
+    log.error(() => "retryOn predicate threw; retrying the failure", predicateError);
+    return true;
   }
 }
 

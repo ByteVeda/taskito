@@ -34,6 +34,7 @@ export type {
   JsSubscription,
   JsTaskInvocation,
   JsTaskLog,
+  JsTaskOutcome,
   JsTopic,
   JsTopicLogStat,
   JsTopicMessage,

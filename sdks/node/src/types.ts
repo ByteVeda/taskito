@@ -126,6 +126,17 @@ export interface TaskOptions {
   maxRetries?: number;
   /** Exponential backoff bounds for retries. */
   retryBackoff?: { baseMs?: number; maxMs?: number };
+  /**
+   * Classifies a thrown error as retryable. Returning `false` dead-letters the
+   * job immediately, whatever retry budget is left — use it for permanent
+   * failures (a malformed payload, a 4xx) that no amount of retrying fixes.
+   * Unset retries everything, as does a predicate that throws.
+   *
+   * Synchronous by design: the job cannot settle until it answers. Applies to
+   * errors the handler throws — a timeout is detected outside the handler and
+   * always consumes a retry.
+   */
+  retryOn?: (error: unknown) => boolean;
   /** Per-job timeout default (ms); enforced by the worker. */
   timeoutMs?: number;
   /** Cap on concurrently-running jobs of this task, across the cluster. */
