@@ -12,6 +12,59 @@ All notable changes to taskito are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
 
+## 0.21.0
+
+Overload-controls and retention release. The queue gains admission and load-shedding controls,
+retention runs by default with elected cleaners, an opt-in log/cursor pub/sub model lands, and
+`taskito-core` is prepared for standalone publication. Cross-SDK parity work and Node webhook
+hardening round it out.
+
+### Added
+
+- **Log + cursor pub/sub.** An opt-in `log` topic mode writes one message row per publish (O(1))
+  and is consumed by pull — read, process, then ack — with per-message acknowledgement, a
+  first-class topic registry, and a managed consumer that tracks cursors for you.
+- **Retention, on by default.** Per-table retention windows purge aged job, dead-letter, and
+  archived rows. A single reaper and retention cleaner are elected across workers so the sweep
+  runs once, and every purge is bounded on all three backends.
+- **Overload controls.** An opt-in `max_pending` admission cap rejects enqueues past a ceiling,
+  opt-in CoDel load shedding drops work that has dwelled too long, and an opt-in LIFO dispatch
+  order serves newest-first.
+- **Retry budget.** A per-task token-bucket `retry_budget` caps how fast a task may retry,
+  independently of `max_retries`.
+- **Native async dispatch.** Coroutine tasks run on a native async executor, with worker drain
+  decoupled from Python reference counts.
+- **taskito-tui.** A headless terminal UI crate inspects and operates a queue directly against
+  its database, with no changes to the core.
+- **Native Rust worker.** A native worker with a task registry and dispatcher, plus typed Redis
+  and JSON error variants, as part of readying `taskito-core` for standalone use.
+- **Cross-SDK parity.** Node and Java gain per-task policy and batching parity; the remaining
+  parity gaps are tracked explicitly.
+- **Single-source release version.** One version literal in the root manifest drives every SDK,
+  checked in CI so a mismatched manifest fails the build.
+
+### Changed
+
+- **Scale to millions of rows.** Keyset pagination and bounded scans replace offset paging and
+  full scans across listings and mass mutations.
+- **Async backpressure.** In-flight work is bounded to the pool's worker and async concurrency,
+  so async pools no longer over-claim.
+- **One task lifecycle.** Synchronous and native-async dispatch share a single task-lifecycle
+  path in Python.
+- **Retention tuning.** PostgreSQL fillfactor and autovacuum are tuned for the retention
+  workload, and the Redis archived-retention purge is bounded.
+
+### Fixed
+
+- **Node webhook SSRF guard.** Webhook delivery screens loopback, private, link-local, and
+  cloud-metadata targets at registration and re-checks every attempt; redirects are not followed.
+- **Node webhook store.** Subscriptions persist in the shared cross-SDK layout, so a hook
+  registered by any SDK is visible to all of them.
+- **Node log consumers** flush when subscriptions are declared and stop earlier on worker
+  shutdown.
+- **Negative `result_ttl`** is rejected rather than silently accepted (Python).
+- Documentation is served under `/taskito` without a doubled path prefix.
+
 ## 0.20.0
 
 Scaling release: the queue survives higher task ingest/dispatch and pub/sub fan-out rates, and
