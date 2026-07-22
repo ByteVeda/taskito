@@ -229,6 +229,28 @@ layout or each shell sees only its own hooks.
 - **Delivery log** is separate: key `webhooks:deliveries:<subscription_id>`,
   one JSON array per subscription, newest last.
 
+## Effective retention (cross-SDK)
+Retention windows live in `SchedulerConfig`, inside the worker process — a
+dashboard elsewhere cannot see them. So the elected retention leader publishes
+what it applies to the settings KV on every cleanup sweep, and every shell's
+dashboard echoes that document instead of guessing at the defaults.
+
+- **Key** `retention:effective:<namespace>` (unnamespaced queues use `default`).
+  The `retention:` prefix is **reserved**: a shell's settings API must treat it
+  the way it treats `auth:` — never listed, written, or deleted through the
+  generic KV endpoints, so the published policy cannot be spoofed.
+- **Document** (snake_case; windows in **milliseconds**, `null` = keep forever):
+  `enabled`, `defaulted`, `namespace`, `reported_at` (Unix ms), and `windows` with
+  `archived_jobs_ttl_ms`, `dead_letter_ttl_ms`, `task_logs_ttl_ms`,
+  `task_metrics_ttl_ms`, `job_errors_ttl_ms`.
+- **Only the leader writes it** — a peer's config does not govern the deletes.
+  `reported_at` is rewritten every sweep, so it doubles as proof a leader is
+  still enforcing the policy.
+- **Absent = unreported**, not "retention off": no leader has swept yet. A shell
+  surfaces that state distinctly; `enabled: false` is what "off" looks like.
+- Shells read it through `scheduler::retention::read_effective_retention_json`
+  rather than parsing the key themselves.
+
 ## Types the shell produces / consumes
 - **`Job`** — `job.rs`. Fields incl. `id`, `queue`, `task_name`, `payload: Vec<u8>` (opaque),
   `status`, `priority`, `retry_count`, `max_retries`, `timeout_ms`, `unique_key`,

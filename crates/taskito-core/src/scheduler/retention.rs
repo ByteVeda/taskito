@@ -5,7 +5,21 @@
 //! per-entry TTL a single job or DLQ entry can carry, which is honored
 //! independently of any window here.
 
+use serde::{Deserialize, Serialize};
+
+use crate::error::Result;
+use crate::storage::Storage;
+
 const DAY_MS: i64 = 86_400_000;
+
+/// Namespace label used when a queue runs unnamespaced.
+pub const DEFAULT_NAMESPACE: &str = "default";
+
+/// Settings-key prefix under which the elected retention leader publishes the
+/// windows it applies, one key per namespace. Dashboards read it to echo the
+/// live policy; the shells treat the prefix as reserved so it can neither be
+/// listed as an editable setting nor spoofed through the settings API.
+pub const RETENTION_SETTING_PREFIX: &str = "retention:effective:";
 
 /// Recommended default windows, applied when a queue configures no retention at
 /// all. Ordered by the invariant
@@ -24,7 +38,8 @@ pub const DEFAULT_JOB_ERRORS_TTL_MS: i64 = 7 * DAY_MS;
 
 /// Retention window per history table, in milliseconds. `None` keeps a table
 /// forever.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RetentionConfig {
     /// Terminal jobs (`archived_jobs`) — the artifact `get_job` reads after
     /// completion. Covers every terminal status.
@@ -86,6 +101,68 @@ impl RetentionConfig {
     }
 }
 
+/// What the elected retention leader is actually applying, as published for
+/// dashboards to echo. Windows are milliseconds; a `null` window keeps that
+/// table forever.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveRetention {
+    /// False when no table has a window — only per-entry TTLs are swept.
+    pub enabled: bool,
+    /// True when the windows are the recommended defaults because the operator
+    /// configured nothing.
+    pub defaulted: bool,
+    /// Namespace the windows apply to. The purges are not queue-scoped, so they
+    /// cover every queue in this namespace.
+    pub namespace: String,
+    /// When the leader last published this document, in Unix milliseconds.
+    pub reported_at: i64,
+    /// The windows themselves.
+    pub windows: RetentionConfig,
+}
+
+/// Settings key holding the published windows for `namespace`.
+pub fn retention_setting_key(namespace: Option<&str>) -> String {
+    format!(
+        "{RETENTION_SETTING_PREFIX}{}",
+        namespace.unwrap_or(DEFAULT_NAMESPACE)
+    )
+}
+
+/// Publish the windows this leader applies so any dashboard can echo the live
+/// policy instead of guessing at the defaults.
+pub fn publish_effective_retention<S: Storage>(
+    storage: &S,
+    namespace: Option<&str>,
+    snapshot: &EffectiveRetention,
+) -> Result<()> {
+    let json = serde_json::to_string(snapshot)?;
+    storage.set_setting(&retention_setting_key(namespace), &json)
+}
+
+/// The windows last published for `namespace`, or `None` when no leader has
+/// reported yet — the state a dashboard sees before the first cleanup sweep.
+/// An unparseable document reads as unreported rather than failing the caller.
+pub fn read_effective_retention<S: Storage>(
+    storage: &S,
+    namespace: Option<&str>,
+) -> Result<Option<EffectiveRetention>> {
+    let Some(raw) = storage.get_setting(&retention_setting_key(namespace))? else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str(&raw).ok())
+}
+
+/// The published document for `namespace` as JSON, re-encoded from the parsed
+/// form so a shell never forwards a malformed body. `None` when unreported.
+pub fn read_effective_retention_json<S: Storage>(
+    storage: &S,
+    namespace: Option<&str>,
+) -> Result<Option<String>> {
+    read_effective_retention(storage, namespace)?
+        .map(|snapshot| serde_json::to_string(&snapshot).map_err(Into::into))
+        .transpose()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +185,42 @@ mod tests {
             "the DLQ is the longest-lived, deliberately"
         );
         assert!(!r.is_empty(), "the recommended windows are not empty");
+    }
+
+    #[test]
+    fn setting_key_is_namespaced() {
+        assert_eq!(
+            retention_setting_key(Some("tenant-a")),
+            "retention:effective:tenant-a"
+        );
+        // An unnamespaced queue publishes under the same label the cleanup
+        // announcement uses, so the two always name the same thing.
+        assert_eq!(
+            retention_setting_key(None),
+            "retention:effective:default".to_string()
+        );
+    }
+
+    #[test]
+    fn published_document_round_trips() {
+        let snapshot = EffectiveRetention {
+            enabled: true,
+            defaulted: false,
+            namespace: DEFAULT_NAMESPACE.to_string(),
+            reported_at: 1_753_200_000_000,
+            windows: RetentionConfig {
+                archived_jobs_ttl_ms: Some(DAY_MS),
+                ..RetentionConfig::default()
+            },
+        };
+
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(
+            serde_json::from_str::<EffectiveRetention>(&json).unwrap(),
+            snapshot
+        );
+        // A window that keeps its table forever must survive as an explicit
+        // null — a shell reads absent and null identically.
+        assert!(json.contains("\"dead_letter_ttl_ms\":null"));
     }
 }

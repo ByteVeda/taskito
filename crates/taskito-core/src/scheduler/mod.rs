@@ -2225,6 +2225,92 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_cleanup_publishes_the_effective_windows() {
+        // The elected cleaner records what it applies so a dashboard in another
+        // process can echo the live policy.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let scheduler = Scheduler::new(
+            storage,
+            vec!["default".to_string()],
+            SchedulerConfig::default(),
+            Some("tenant-a".to_string()),
+        );
+
+        scheduler.auto_cleanup().unwrap();
+
+        let published =
+            retention::read_effective_retention(&scheduler.storage, Some("tenant-a")).unwrap();
+        let published = published.expect("the leader must publish its windows");
+        assert!(published.enabled);
+        assert!(published.defaulted, "nothing was configured");
+        assert_eq!(published.namespace, "tenant-a");
+        assert_eq!(published.windows, retention::RetentionConfig::recommended());
+        assert!(published.reported_at > 0);
+
+        // Namespace-scoped: another tenant's dashboard sees nothing from this one.
+        assert!(
+            retention::read_effective_retention(&scheduler.storage, None)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_auto_cleanup_publishes_a_disabled_policy() {
+        // "Retention is off" is a policy worth showing — an empty config must
+        // publish as disabled, not as unreported.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            retention: Some(retention::RetentionConfig::default()),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+
+        scheduler.auto_cleanup().unwrap();
+
+        let published = retention::read_effective_retention(&scheduler.storage, None)
+            .unwrap()
+            .expect("a disabled policy is still published");
+        assert!(!published.enabled);
+        assert!(!published.defaulted);
+        assert_eq!(published.namespace, retention::DEFAULT_NAMESPACE);
+    }
+
+    #[test]
+    fn test_non_leader_does_not_publish_the_windows() {
+        // Only the elected cleaner's config governs the deletes, so only it may
+        // report — otherwise a peer with a different config overwrites the truth.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let scheduler = Scheduler::new(
+            storage,
+            vec!["default".to_string()],
+            SchedulerConfig::default(),
+            None,
+        );
+
+        assert!(scheduler
+            .storage
+            .acquire_lock(
+                crate::storage::RETENTION_LOCK,
+                "another-worker",
+                crate::storage::RETENTION_LOCK_TTL_MS
+            )
+            .unwrap());
+
+        scheduler.auto_cleanup().unwrap();
+
+        assert!(
+            retention::read_effective_retention(&scheduler.storage, None)
+                .unwrap()
+                .is_none(),
+            "a non-leader must not publish"
+        );
+    }
+
+    #[test]
     fn test_archive_retention_keeps_side_tables_with_no_window() {
         // Per-table independence: archived_jobs has a window but task_logs does
         // not, so purging the archived job must NOT cascade-delete its logs —
