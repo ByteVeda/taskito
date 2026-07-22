@@ -66,6 +66,21 @@ pub struct JsTaskInvocation {
     pub payload: Buffer,
 }
 
+/// What the JS task callback resolves with: either a result or an error, never
+/// both. Resolving (rather than rejecting) is what lets the shell say *how* a
+/// failure should be treated — a rejection carries nothing but a string.
+#[napi(object)]
+pub struct JsTaskOutcome {
+    /// The serialized task result. Set only on success.
+    pub result: Option<Buffer>,
+    /// The failure, as the canonical cross-SDK `{errtype,message,traceback}`
+    /// JSON. Its presence is what marks the outcome a failure.
+    pub error: Option<String>,
+    /// Whether the failure may be retried; absent means yes. `false` sends the
+    /// job straight to the dead-letter queue, whatever budget is left.
+    pub retryable: Option<bool>,
+}
+
 /// JS-facing view of a stored [`Job`]. `result` is the opaque result blob (or
 /// `null`); the shell deserializes it.
 #[napi(object)]

@@ -6,7 +6,8 @@ import java.util.Optional;
 public interface WorkerControl extends AutoCloseable {
     void completeJob(long token, byte[] result);
 
-    void failJob(long token, String error);
+    /** Fail a job. {@code retryable} false dead-letters it whatever budget is left. */
+    void failJob(long token, String error, boolean retryable);
 
     void cancelJob(long token);
 

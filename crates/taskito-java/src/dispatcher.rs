@@ -23,10 +23,11 @@ use tokio::sync::oneshot;
 
 use crate::jvm;
 
-/// The outcome Java reports for a submitted job.
+/// The outcome Java reports for a submitted job. A failure carries whether it
+/// may be retried — the task's `retryOn` predicate runs on the Java side.
 pub enum TaskOutcome {
     Success(Vec<u8>),
-    Failure(String),
+    Failure(String, bool),
     Cancelled,
 }
 
@@ -109,7 +110,7 @@ async fn run_one(
 
     if let Err(err) = submit_to_java(callbacks, token, &job) {
         registry.forget(token);
-        return failure(job, err, started.elapsed().as_nanos() as i64, false);
+        return failure(job, err, started.elapsed().as_nanos() as i64, false, true);
     }
 
     // `timeout_ms <= 0` means no limit. On timeout we drop the pending entry; a
@@ -120,7 +121,7 @@ async fn run_one(
             Err(_) => {
                 registry.forget(token);
                 let wall = started.elapsed().as_nanos() as i64;
-                return failure(job, "task timed out".to_string(), wall, true);
+                return failure(job, "task timed out".to_string(), wall, true, true);
             }
         }
     } else {
@@ -136,16 +137,22 @@ async fn run_one(
             wall_time_ns: wall,
         },
         Ok(TaskOutcome::Cancelled) => cancelled(job, wall),
-        Ok(TaskOutcome::Failure(error)) => {
+        Ok(TaskOutcome::Failure(error, retryable)) => {
             // A failure on a cancel-requested job is a cancellation, not a fault.
             if storage.is_cancel_requested(&job.id).unwrap_or(false) {
                 cancelled(job, wall)
             } else {
-                failure(job, error, wall, false)
+                failure(job, error, wall, false, retryable)
             }
         }
         // The oneshot sender dropped without completing — the Java side died.
-        Err(_) => failure(job, "java task channel dropped".to_string(), wall, false),
+        Err(_) => failure(
+            job,
+            "java task channel dropped".to_string(),
+            wall,
+            false,
+            true,
+        ),
     }
 }
 
@@ -193,7 +200,14 @@ fn cancelled(job: Job, wall_time_ns: i64) -> JobResult {
     }
 }
 
-fn failure(job: Job, error: String, wall_time_ns: i64, timed_out: bool) -> JobResult {
+/// `should_retry` false skips the retry budget entirely and dead-letters the job.
+fn failure(
+    job: Job,
+    error: String,
+    wall_time_ns: i64,
+    timed_out: bool,
+    should_retry: bool,
+) -> JobResult {
     JobResult::Failure {
         job_id: job.id,
         error,
@@ -201,7 +215,7 @@ fn failure(job: Job, error: String, wall_time_ns: i64, timed_out: bool) -> JobRe
         max_retries: job.max_retries,
         task_name: job.task_name,
         wall_time_ns,
-        should_retry: true,
+        should_retry,
         timed_out,
     }
 }

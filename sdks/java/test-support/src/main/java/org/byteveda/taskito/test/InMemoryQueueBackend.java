@@ -965,8 +965,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
         job.completedAt = now();
     }
 
-    private synchronized void onFail(JobRec job, String error) {
-        if (job.retryCount < job.maxRetries) {
+    /** Mirrors the core: a non-retryable failure skips the budget and dead-letters. */
+    private synchronized void onFail(JobRec job, String error, boolean retryable) {
+        if (retryable && job.retryCount < job.maxRetries) {
             job.retryCount++;
             job.status = "pending";
             job.startedAt = null;
@@ -1223,14 +1224,14 @@ public final class InMemoryQueueBackend implements QueueBackend {
         }
 
         @Override
-        public void failJob(long token, String error) {
+        public void failJob(long token, String error, boolean retryable) {
             String jobId = inFlight.remove(token);
             JobRec job = jobs.get(jobId);
             if (job == null) {
                 return;
             }
-            boolean willRetry = job.retryCount < job.maxRetries;
-            onFail(job, error);
+            boolean willRetry = retryable && job.retryCount < job.maxRetries;
+            onFail(job, error, retryable);
             bridge.onOutcome(willRetry ? "retry" : "dead", jobId, job.taskName, error, job.retryCount, false);
         }
 

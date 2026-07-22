@@ -16,7 +16,7 @@ public final class NativeWorker {
 
     public static native void completeJob(long handle, long token, byte[] result);
 
-    public static native void failJob(long handle, long token, String error);
+    public static native void failJob(long handle, long token, String error, boolean retryable);
 
     public static native void cancelJob(long handle, long token);
 

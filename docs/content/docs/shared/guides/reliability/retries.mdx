@@ -202,23 +202,72 @@ In practice, use one or the other.
 
 <SdkOnly sdk="node">
 
-There's no exception-type filter on the Node binding today — every error
-triggers a retry until the budget is exhausted. Distinguish terminal errors
-inside the task and either swallow them (return normally) or throw so the
-job dead-letters immediately by setting `maxRetries: 0` for that call:
+`retryOn` classifies a thrown error: return `false` and the job dead-letters
+immediately, whatever budget is left. One predicate covers both directions —
+test for the errors worth retrying, or negate a test for the permanent ones:
 
 ```ts
-queue.enqueue("parseData", [raw], { maxRetries: 0 }); // no retry for this job
+// Whitelist: retry only these; everything else skips straight to DLQ.
+queue.task("fetchData", fetchData, {
+  maxRetries: 5,
+  retryOn: (error) => error instanceof ConnectionError || error instanceof TimeoutError,
+});
+
+// Blacklist: retry everything except a permanent parse failure.
+queue.task("parseData", parseData, {
+  maxRetries: 5,
+  retryOn: (error) => !(error instanceof SyntaxError),
+});
 ```
+
+| Option | Description |
+|---|---|
+| `retryOn` | `(error: unknown) => boolean`. `true` retries as usual; `false` dead-letters at once. Unset retries every error. |
+
+The predicate is synchronous — the job cannot settle until it answers — and
+runs on the worker that caught the error, so it sees the live `Error` object,
+not just its type name. One that throws is treated as `true`: a broken
+classifier must not silently turn transient failures into dead letters.
+
+It sees every error raised while running the task, not only the handler's: a
+`before`/`after` middleware hook or result serialization can fail too, and a
+whitelist like the first example above dead-letters those as well. Payload
+decoding fails earlier and always retries, as does a timeout.
 
 </SdkOnly>
 
 <SdkOnly sdk="java">
 
-There's no exception-type filter on the Java binding today — every thrown
-exception triggers a retry until the budget is exhausted. Distinguish
-terminal errors inside the handler, or set `maxRetries(0)` for calls that
-should dead-letter immediately on any failure.
+`retryOn` classifies a thrown exception: return `false` and the job
+dead-letters immediately, whatever budget is left. One predicate covers both
+directions — test for the exceptions worth retrying, or negate a test for the
+permanent ones:
+
+```java
+// Whitelist: retry only these; everything else skips straight to DLQ.
+Task<String> FETCH = Task.of("fetch", String.class)
+        .maxRetries(5)
+        .retryOn(error -> error instanceof IOException);
+
+// Blacklist: retry everything except a permanent parse failure.
+Task<String> PARSE = Task.of("parse", String.class)
+        .maxRetries(5)
+        .retryOn(error -> !(error instanceof IllegalArgumentException));
+```
+
+| Method | Description |
+|---|---|
+| `retryOn(Predicate<Throwable>)` | `true` retries as usual; `false` dead-letters at once. Unset retries every exception. |
+
+Unlike the backoff curve, the predicate never reaches the scheduler — it runs
+on the worker that caught the exception, so it sees the live `Throwable`. One
+that throws is treated as `true`: a broken classifier must not silently turn
+transient failures into dead letters.
+
+It sees every exception raised while running the task, not only the handler's:
+`before`/`after` middleware, payload decoding and result serialization can fail
+too, and a whitelist like the first example above dead-letters those as well. A
+timeout is detected outside the handler and always retries.
 
 </SdkOnly>
 
@@ -276,6 +325,22 @@ option — it can't be overridden at enqueue time.
 The "Exception passes filter?" step only applies filtering when `retry_on`
 or `dont_retry_on` is set on the task — otherwise every exception passes
 straight through to the retry-budget check.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+The "Exception passes filter?" step only applies filtering when `retryOn` is
+set on the task — otherwise every error passes straight through to the
+retry-budget check.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The "Exception passes filter?" step only applies filtering when `retryOn` is
+set on the task — otherwise every exception passes straight through to the
+retry-budget check.
 
 </SdkOnly>
 

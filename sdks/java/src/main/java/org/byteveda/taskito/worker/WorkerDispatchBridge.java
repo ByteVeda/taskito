@@ -82,7 +82,8 @@ final class WorkerDispatchBridge implements WorkerBridge {
         WorkerControl bound = control.join();
         RegisteredTask task = handlers.get(taskName);
         if (task == null) {
-            bound.failJob(token, "no handler registered for task '" + taskName + "'");
+            // Retryable: another worker in the fleet may well have it registered.
+            bound.failJob(token, "no handler registered for task '" + taskName + "'", true);
             return;
         }
         JobInfo job = new JobInfo(jobId, taskName, () -> loadMetadata(jobId));
@@ -117,11 +118,28 @@ final class WorkerDispatchBridge implements WorkerBridge {
                 m.onError(context, t);
             }
             // Canonical structured error (middleware above saw the live Throwable).
-            bound.failJob(token, TaskErrors.encode(t));
+            bound.failJob(token, TaskErrors.encode(t), isRetryable(task, t));
         } finally {
             if (scope != null) {
                 Resources.exit(scope); // unbind the thread + dispose task-scoped resources (LIFO)
             }
+        }
+    }
+
+    /**
+     * Ask a task's {@code retryOn} predicate whether {@code error} is worth retrying.
+     * No predicate means retry, and so does one that throws — a broken classifier must
+     * not silently turn transient failures into dead letters.
+     */
+    private static boolean isRetryable(RegisteredTask task, Throwable error) {
+        if (task.retryOn == null) {
+            return true;
+        }
+        try {
+            return task.retryOn.test(error);
+        } catch (RuntimeException e) {
+            LOG.warn("retryOn predicate threw; retrying the failure", e);
+            return true;
         }
     }
 

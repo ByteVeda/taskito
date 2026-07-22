@@ -18,6 +18,7 @@ replaces the function and options.
 |---|---|---|
 | `maxRetries` | `number` | Attempts before dead-lettering. |
 | `retryBackoff` | `{ baseMs, maxMs }` | Exponential backoff bounds. |
+| `retryOn` | `(error) => boolean` | Classifies a thrown error; `false` dead-letters it immediately. |
 | `timeoutMs` | `number` | Per-attempt timeout. |
 | `maxConcurrent` | `number` | Max simultaneous running jobs of this task. |
 | `rateLimit` | `` `"100/m"` `` | Rate limit as `count/unit`, unit `s` \| `m` \| `h`. |

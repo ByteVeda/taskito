@@ -2,7 +2,7 @@
 //!
 //! Implements the core [`WorkerDispatcher`] trait. For every dequeued job it
 //! invokes the JS task callback via a `ThreadsafeFunction`, awaits the returned
-//! `Promise<Buffer>`, and reports a [`JobResult`] back to the scheduler. This is
+//! `Promise<JsTaskOutcome>`, and reports a [`JobResult`] back to the scheduler. This is
 //! the Node mirror of the Python shell's worker pool.
 
 use std::sync::Arc;
@@ -17,9 +17,9 @@ use taskito_core::worker::WorkerDispatcher;
 use taskito_core::{Storage, StorageBackend};
 use tokio::sync::{oneshot, Semaphore};
 
-use crate::convert::JsTaskInvocation;
+use crate::convert::{JsTaskInvocation, JsTaskOutcome};
 
-/// Task callback registered from JS: `(invocation) => Promise<Buffer>`.
+/// Task callback registered from JS: `(invocation) => Promise<JsTaskOutcome>`.
 type TaskCallback = ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>;
 
 /// Executes jobs by dispatching them to a JavaScript callback.
@@ -110,14 +110,15 @@ async fn run_one(callback: &TaskCallback, storage: &StorageBackend, mut job: Job
     };
 
     // The callback runs on the JS thread and returns a Promise; bridge its
-    // awaited value back to this async context through a oneshot.
-    let (tx, rx) = oneshot::channel::<napi::Result<Vec<u8>>>();
+    // awaited value back to this async context through a oneshot. The JS view
+    // is copied out (Buffer -> Vec) while still on that side.
+    let (tx, rx) = oneshot::channel::<napi::Result<TaskOutcome>>();
     callback.call_with_return_value(
         invocation,
         ThreadsafeFunctionCallMode::NonBlocking,
-        move |promise: Promise<Buffer>| {
+        move |promise: Promise<JsTaskOutcome>| {
             spawn(async move {
-                let outcome = promise.await.map(|buffer| buffer.to_vec());
+                let outcome = promise.await.map(TaskOutcome::from);
                 let _ = tx.send(outcome);
             });
             Ok(())
@@ -133,49 +134,80 @@ async fn run_one(callback: &TaskCallback, storage: &StorageBackend, mut job: Job
     };
     let wall_time_ns = started.elapsed().as_nanos() as i64;
     match timed {
-        Ok(Ok(Ok(result))) => JobResult::Success {
-            job_id: job.id,
-            result: Some(result),
-            task_name: job.task_name,
-            wall_time_ns,
-        },
-        Ok(Ok(Err(err))) => {
-            // A rejected task that was cancel-requested is a cancellation, not a
+        Ok(Ok(Ok(outcome))) => match outcome.error {
+            None => JobResult::Success {
+                job_id: job.id,
+                result: outcome.result,
+                task_name: job.task_name,
+                wall_time_ns,
+            },
+            // A failed task that was cancel-requested is a cancellation, not a
             // failure (the JS side aborts via the cancel signal).
-            if storage.is_cancel_requested(&job.id).unwrap_or(false) {
+            Some(_) if storage.is_cancel_requested(&job.id).unwrap_or(false) => {
                 JobResult::Cancelled {
                     job_id: job.id,
                     task_name: job.task_name,
                     wall_time_ns,
                 }
-            } else {
-                // `Error::to_string()` prepends the napi status ("GenericFailure, ");
-                // the bare reason is the JS error's string form, which the worker
-                // shapes into the cross-SDK structured-error JSON.
-                let reason = if err.reason.is_empty() {
-                    err.to_string()
-                } else {
-                    err.reason.clone()
-                };
-                failure(job, reason, wall_time_ns, false)
             }
+            Some(error) => failure(job, error, wall_time_ns, false, outcome.retryable),
+        },
+        // The promise rejected rather than resolving an outcome: the shell threw
+        // before it could shape one (an unregistered task, a payload it could
+        // not decode). Retryable — another worker may well have the task.
+        // `Error::to_string()` prepends the napi status ("GenericFailure, "), so
+        // prefer the bare reason, which is the JS error's string form.
+        Ok(Ok(Err(err))) => {
+            let reason = if err.reason.is_empty() {
+                err.to_string()
+            } else {
+                err.reason.clone()
+            };
+            failure(job, reason, wall_time_ns, false, true)
         }
         Ok(Err(_)) => failure(
             job,
             "node task channel dropped".to_string(),
             wall_time_ns,
             false,
+            true,
         ),
         // We report the timeout, but the underlying JS promise cannot be force-
         // killed and keeps running in the background — same limitation as the
         // Python shell. Non-idempotent tasks should cooperate via the cancel
         // signal (`currentJob().signal`) and check it on long operations.
-        Err(_) => failure(job, "task timed out".to_string(), wall_time_ns, true),
+        Err(_) => failure(job, "task timed out".to_string(), wall_time_ns, true, true),
     }
 }
 
-/// Build a retryable [`JobResult::Failure`] from a job and error message.
-fn failure(job: Job, error: String, wall_time_ns: i64, timed_out: bool) -> JobResult {
+/// One finished invocation, copied out of its JS view so it can cross threads.
+struct TaskOutcome {
+    result: Option<Vec<u8>>,
+    error: Option<String>,
+    /// Whether a failure may be retried. The shell's per-task `retryOn`
+    /// predicate decides; an absent flag means retry, as before it existed.
+    retryable: bool,
+}
+
+impl From<JsTaskOutcome> for TaskOutcome {
+    fn from(outcome: JsTaskOutcome) -> Self {
+        Self {
+            result: outcome.result.map(|buffer| buffer.to_vec()),
+            error: outcome.error,
+            retryable: outcome.retryable.unwrap_or(true),
+        }
+    }
+}
+
+/// Build a [`JobResult::Failure`] from a job and error message. `should_retry`
+/// false skips the retry budget entirely and dead-letters the job.
+fn failure(
+    job: Job,
+    error: String,
+    wall_time_ns: i64,
+    timed_out: bool,
+    should_retry: bool,
+) -> JobResult {
     JobResult::Failure {
         job_id: job.id,
         error,
@@ -183,7 +215,7 @@ fn failure(job: Job, error: String, wall_time_ns: i64, timed_out: bool) -> JobRe
         max_retries: job.max_retries,
         task_name: job.task_name,
         wall_time_ns,
-        should_retry: true,
+        should_retry,
         timed_out,
     }
 }

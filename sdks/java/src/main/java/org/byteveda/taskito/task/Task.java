@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Typed task descriptor: a name, its payload type, and default enqueue options.
@@ -26,6 +27,7 @@ public final class Task<T> {
     private final String retryBudget;
     private final Integer maxConcurrent;
     private final Integer maxInFlightPerTask;
+    private final Predicate<Throwable> retryOn;
 
     private Task(
             String name,
@@ -38,7 +40,8 @@ public final class Task<T> {
             String rateLimit,
             String retryBudget,
             Integer maxConcurrent,
-            Integer maxInFlightPerTask) {
+            Integer maxInFlightPerTask,
+            Predicate<Throwable> retryOn) {
         this.name = Objects.requireNonNull(name, "task name must not be null");
         if (name.trim().isEmpty()) {
             throw new IllegalArgumentException("task name must not be blank");
@@ -53,12 +56,13 @@ public final class Task<T> {
         this.retryBudget = retryBudget;
         this.maxConcurrent = maxConcurrent;
         this.maxInFlightPerTask = maxInFlightPerTask;
+        this.retryOn = retryOn;
     }
 
     /** A task whose payload deserializes to {@code payloadType}. */
     public static <T> Task<T> of(String name, Class<T> payloadType) {
         return new Task<>(
-                name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null, null, null);
+                name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null, null, null, null);
     }
 
     /** A task whose payload deserializes to a generic type, e.g. {@code new TypeReference<List<Foo>>(){}}. */
@@ -70,6 +74,7 @@ public final class Task<T> {
                 null,
                 List.of(),
                 false,
+                null,
                 null,
                 null,
                 null,
@@ -90,7 +95,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -110,7 +116,38 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
+    }
+
+    /**
+     * A copy of this task that retries a failure only when {@code retryOn} accepts
+     * the thrown exception. Returning {@code false} dead-letters the job at once,
+     * whatever retry budget is left — for permanent failures (a malformed payload,
+     * a 4xx) that no amount of retrying fixes. Unset retries every exception, and
+     * so does a predicate that itself throws.
+     *
+     * <p>Evaluated by the worker that ran the handler, so unlike the backoff curve
+     * it never reaches the scheduler. It sees every exception raised while running
+     * the task, not only the handler's: {@code before}/{@code after} middleware,
+     * payload decoding and result serialization can fail too, so a whitelist
+     * predicate dead-letters those as well. A timeout is detected outside the
+     * handler and always consumes a retry.
+     */
+    public Task<T> retryOn(Predicate<Throwable> retryOn) {
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -131,7 +168,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -151,7 +189,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -171,7 +210,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -191,7 +231,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -214,7 +255,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -236,7 +278,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /**
@@ -259,7 +302,8 @@ public final class Task<T> {
                 rateLimit,
                 retryBudget,
                 maxConcurrent,
-                maxInFlightPerTask);
+                maxInFlightPerTask,
+                retryOn);
     }
 
     /** A cap of zero is the annotation's "unset" sentinel, never a literal zero. */
@@ -351,5 +395,10 @@ public final class Task<T> {
     /** Cap on this task's share of one worker's dispatch slots, or {@code null} when uncapped. */
     public Integer maxInFlightPerTask() {
         return maxInFlightPerTask;
+    }
+
+    /** Predicate deciding whether a thrown exception is retryable, or {@code null} to retry all. */
+    public Predicate<Throwable> retryOn() {
+        return retryOn;
     }
 }
