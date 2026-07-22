@@ -186,5 +186,7 @@ export function formatRetentionWindow(ms: number | null): string {
   if (ms % DAY_MS === 0) return plural(ms / DAY_MS, "day");
   if (ms % HOUR_MS === 0) return plural(ms / HOUR_MS, "hour");
   if (ms % MINUTE_MS === 0) return plural(ms / MINUTE_MS, "minute");
-  return plural(Math.round(ms / 1000), "second");
+  // Floor at one second: a sub-second window still keeps rows for a moment, and
+  // rounding it to "0 seconds" would read as the immediate purge above.
+  return plural(Math.max(1, Math.round(ms / 1000)), "second");
 }

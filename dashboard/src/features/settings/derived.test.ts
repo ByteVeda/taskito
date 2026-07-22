@@ -138,6 +138,13 @@ describe("formatRetentionWindow", () => {
     expect(formatRetentionWindow(1_500)).toBe("2 seconds");
   });
 
+  it("floors a sub-second window at one second", () => {
+    // Rounding these to "0 seconds" would read as the immediate purge below,
+    // but the rows do survive for a moment.
+    expect(formatRetentionWindow(1)).toBe("1 second");
+    expect(formatRetentionWindow(499)).toBe("1 second");
+  });
+
   it("distinguishes no window from a zero window", () => {
     // null = the table is never swept; 0 = purged as soon as the cleaner sees it.
     expect(formatRetentionWindow(null)).toBe("Kept forever");
