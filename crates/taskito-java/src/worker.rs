@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
-use jni::sys::jlong;
+use jni::sys::{jboolean, jlong, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
@@ -600,7 +600,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_completeJ
     })
 }
 
-/// `void failJob(long workerHandle, long token, String error)`.
+/// `void failJob(long workerHandle, long token, String error, boolean retryable)`.
 #[no_mangle]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_failJob<'local>(
     mut env: JNIEnv<'local>,
@@ -608,13 +608,15 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_failJob<'
     handle: jlong,
     token: jlong,
     error: JString<'local>,
+    retryable: jboolean,
 ) {
     guard(&mut env, (), |env| {
         let worker = unsafe { borrow_worker(handle) };
         let message = read_string(env, &error)?;
-        worker
-            .registry
-            .complete(token as u64, TaskOutcome::Failure(message));
+        worker.registry.complete(
+            token as u64,
+            TaskOutcome::Failure(message, retryable != JNI_FALSE),
+        );
         Ok(())
     })
 }

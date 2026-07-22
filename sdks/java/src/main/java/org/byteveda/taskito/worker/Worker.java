@@ -243,12 +243,14 @@ public final class Worker implements AutoCloseable {
         }
 
         public <T, R> Builder handle(String taskName, Class<T> payloadType, TaskFunction<T, R> handler) {
-            handlers.put(taskName, new RegisteredTask(payloadType, cast(handler), List.of()));
+            handlers.put(taskName, new RegisteredTask(payloadType, cast(handler), List.of(), null));
             return this;
         }
 
         public <T, R> Builder handle(Task<T> task, TaskFunction<T, R> handler) {
-            handlers.put(task.name(), new RegisteredTask(task.payloadType(), cast(handler), task.codecNames()));
+            handlers.put(
+                    task.name(),
+                    new RegisteredTask(task.payloadType(), cast(handler), task.codecNames(), task.retryOn()));
             capturePolicy(task);
             return this;
         }
@@ -266,7 +268,8 @@ public final class Worker implements AutoCloseable {
                     new RegisteredTask(
                             handler.task().payloadType(),
                             cast(handler.function()),
-                            handler.task().codecNames()));
+                            handler.task().codecNames(),
+                            handler.task().retryOn()));
             capturePolicy(handler.task());
             return this;
         }

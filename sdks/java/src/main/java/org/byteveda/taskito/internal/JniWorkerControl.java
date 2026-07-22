@@ -41,9 +41,9 @@ public final class JniWorkerControl implements WorkerControl {
     }
 
     @Override
-    public void failJob(long token, String error) {
+    public void failJob(long token, String error, boolean retryable) {
         withOpenHandle(() -> {
-            NativeWorker.failJob(handle, token, error);
+            NativeWorker.failJob(handle, token, error, retryable);
             return null;
         });
     }
