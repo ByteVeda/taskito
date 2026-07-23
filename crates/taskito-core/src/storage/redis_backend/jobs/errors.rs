@@ -45,6 +45,46 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Count error records a purge would remove older than the cutoff,
+    /// mirroring [`Self::purge_job_errors`] without deleting. Error history is a
+    /// list per job, so it walks the `job_errors:*` keys exactly as the purge
+    /// does, counting the rows below the cutoff instead of rewriting the list.
+    pub fn count_expired_job_errors(&self, older_than_ms: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let pattern = self.key(&["job_errors", "*"]);
+        let mut keys: Vec<String> = Vec::new();
+        let mut cursor = 0u64;
+        loop {
+            let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            keys.extend(batch);
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        let mut count = 0u64;
+        for key in keys {
+            let entries: Vec<String> = conn.lrange(&key, 0, -1).map_err(map_err)?;
+            for entry in &entries {
+                if let Ok(row) = serde_json::from_str::<JobError>(entry) {
+                    if row.failed_at < older_than_ms {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
     /// Purge error records older than the cutoff. Returns the count removed.
     pub fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;

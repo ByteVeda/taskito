@@ -1547,6 +1547,118 @@ fn test_purge_dead_with_ttl_per_entry() {
 }
 
 #[test]
+fn test_count_expired_rows_matches_purge_exactly() {
+    // The dry-run count must equal what the purges actually remove. A fresh
+    // in-memory store lets us assert exact equality per table (the shared
+    // contract-suite store only supports before/after deltas).
+    let storage = test_storage();
+    let now = now_millis();
+    let q = "default";
+
+    // archived_jobs: 2 no-TTL + 1 per-entry-expired.
+    for i in 0..2u8 {
+        let job = storage.enqueue(make_job("dr_arch")).unwrap();
+        storage.dequeue(q, now + 1000, None).unwrap();
+        storage.complete(&job.id, Some(vec![i])).unwrap();
+    }
+    let mut nj = make_job("dr_arch_ttl");
+    nj.result_ttl_ms = Some(1);
+    let ttl_job = storage.enqueue(nj).unwrap();
+    storage.dequeue(q, now + 1000, None).unwrap();
+    storage.complete(&ttl_job.id, Some(vec![9])).unwrap();
+
+    // dead_letter: 1 no-TTL + 1 per-entry-expired.
+    let d1 = storage.enqueue(make_job("dr_dead")).unwrap();
+    storage.dequeue(q, now + 1000, None).unwrap();
+    let r1 = storage.get_job(&d1.id).unwrap().unwrap();
+    storage.move_to_dlq(&r1, "boom", None).unwrap();
+    let mut ndj = make_job("dr_dead_ttl");
+    ndj.result_ttl_ms = Some(1);
+    let d2 = storage.enqueue(ndj).unwrap();
+    storage.dequeue(q, now + 1000, None).unwrap();
+    let r2 = storage.get_job(&d2.id).unwrap().unwrap();
+    storage.move_to_dlq(&r2, "boom", None).unwrap();
+
+    // Side tables: 3 logs, 2 metrics, 1 error.
+    let side = storage.enqueue(make_job("dr_side")).unwrap();
+    for i in 0..3 {
+        storage
+            .write_task_log(&side.id, "dr_side", "info", &format!("l{i}"), None)
+            .unwrap();
+    }
+    storage
+        .record_metric("dr_metric", &side.id, 10, 20, true)
+        .unwrap();
+    storage
+        .record_metric("dr_metric", &side.id, 11, 21, true)
+        .unwrap();
+    storage.record_error(&side.id, 0, "e0").unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    let future = now + 10_000;
+    let cutoffs = crate::storage::RetentionCutoffs {
+        archived_jobs: Some(future),
+        dead_letter: Some(future),
+        task_logs: Some(future),
+        task_metrics: Some(future),
+        job_errors: Some(future),
+    };
+
+    let counts = storage.count_expired_rows(&cutoffs, now_millis()).unwrap();
+    // archived = 2 completed (no TTL) + 1 completed (per-entry) + 2 Dead rows
+    // the two DLQ moves also archive (one no-TTL, one per-entry) = 5.
+    assert_eq!(counts.archived_jobs, 5);
+    assert_eq!(counts.dead_letter, 2);
+    assert_eq!(counts.task_logs, 3);
+    assert_eq!(counts.task_metrics, 2);
+    assert_eq!(counts.job_errors, 1);
+    assert_eq!(counts.total(), 13);
+
+    // Each count equals the rows its purge then removes.
+    assert_eq!(
+        storage
+            .purge_completed_with_ttl(cutoffs.archived_jobs)
+            .unwrap(),
+        counts.archived_jobs
+    );
+    assert_eq!(
+        storage.purge_dead_with_ttl(cutoffs.dead_letter).unwrap(),
+        counts.dead_letter
+    );
+    assert_eq!(
+        storage.purge_task_logs(cutoffs.task_logs.unwrap()).unwrap(),
+        counts.task_logs
+    );
+    assert_eq!(
+        storage
+            .purge_metrics(cutoffs.task_metrics.unwrap())
+            .unwrap(),
+        counts.task_metrics
+    );
+    assert_eq!(
+        storage
+            .purge_job_errors(cutoffs.job_errors.unwrap())
+            .unwrap(),
+        counts.job_errors
+    );
+}
+
+#[test]
+fn test_count_expired_rows_empty_store_is_zero() {
+    let storage = test_storage();
+    let cutoffs = crate::storage::RetentionCutoffs {
+        archived_jobs: Some(now_millis() + 10_000),
+        dead_letter: Some(now_millis() + 10_000),
+        task_logs: Some(now_millis() + 10_000),
+        task_metrics: Some(now_millis() + 10_000),
+        job_errors: Some(now_millis() + 10_000),
+    };
+    let counts = storage.count_expired_rows(&cutoffs, now_millis()).unwrap();
+    assert_eq!(counts.total(), 0, "an empty store has nothing to purge");
+}
+
+#[test]
 fn test_purge_dead_drains_across_batches() {
     // 550 DLQ rows exceed one PURGE_BATCH (500): the batched loop must drain
     // every row across iterations, not stop after the first batch.
