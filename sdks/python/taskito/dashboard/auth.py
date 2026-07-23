@@ -18,6 +18,7 @@ crypto dependency is required.
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import hmac
 import json
@@ -27,6 +28,8 @@ import secrets
 import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
+
+from taskito.enums import coerce_enum
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -56,7 +59,17 @@ DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60  # 24h
 USERNAME_MAX_LEN = 64
 PASSWORD_MIN_LEN = 8
 PASSWORD_MAX_LEN = 256
-VALID_ROLES = frozenset({"admin", "viewer"})
+
+
+class Role(str, enum.Enum):
+    """A dashboard user's access level. The wire form is stored in settings."""
+
+    ADMIN = "admin"
+    """Full read/write access to jobs, queues, and users."""
+
+    VIEWER = "viewer"
+    """Read-only access."""
+
 
 # Sentinel prefix used in ``password_hash`` for OAuth-only users so
 # ``verify_password`` can short-circuit-reject any password attempt.
@@ -124,7 +137,7 @@ class User:
 
     username: str
     password_hash: str
-    role: str
+    role: Role
     created_at: int
     last_login_at: int | None = None
     email: str | None = None
@@ -141,7 +154,7 @@ class Session:
 
     token: str
     username: str
-    role: str
+    role: Role
     created_at: int
     expires_at: int
     csrf_token: str
@@ -169,9 +182,16 @@ def _validate_password(password: str) -> None:
         raise ValueError(f"password must be <= {PASSWORD_MAX_LEN} chars")
 
 
-def _validate_role(role: str) -> None:
-    if role not in VALID_ROLES:
-        raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
+def _validate_role(role: Role | str) -> Role:
+    return coerce_enum(Role, role, param="role")
+
+
+def _role_or_viewer(stored: object) -> Role:
+    """Read a persisted role, failing closed on anything unrecognized."""
+    try:
+        return Role(stored)
+    except ValueError:
+        return Role.VIEWER
 
 
 def _oauth_bootstrap_role(
@@ -179,7 +199,7 @@ def _oauth_bootstrap_role(
     email: str | None,
     email_verified: bool,
     admin_emails: tuple[str, ...],
-) -> str:
+) -> Role:
     """Decide the role for a freshly-created OAuth user.
 
     ``admin`` requires a verified email (defence against spoofed claims)
@@ -189,10 +209,10 @@ def _oauth_bootstrap_role(
     first OAuth login can never win admin.
     """
     if not email_verified or not email:
-        return "viewer"
+        return Role.VIEWER
     if email.lower() in {e.lower() for e in admin_emails}:
-        return "admin"
-    return "viewer"
+        return Role.ADMIN
+    return Role.VIEWER
 
 
 # ── Auth store ─────────────────────────────────────────────────────────
@@ -230,17 +250,17 @@ class AuthStore:
         row = self._load_users().get(username)
         return self._row_to_user(username, row) if row else None
 
-    def create_user(self, username: str, password: str, role: str = "admin") -> User:
+    def create_user(self, username: str, password: str, role: Role | str = Role.ADMIN) -> User:
         _validate_username(username)
         _validate_password(password)
-        _validate_role(role)
+        validated_role = _validate_role(role)
         users = self._load_users()
         if username in users:
             raise ValueError(f"user '{username}' already exists")
         now_ms = int(time.time() * 1000)
         users[username] = {
             "password_hash": hash_password(password),
-            "role": role,
+            "role": validated_role,
             "created_at": now_ms,
             "last_login_at": None,
         }
@@ -289,7 +309,7 @@ class AuthStore:
         return User(
             username=username,
             password_hash=str(row["password_hash"]),
-            role=str(row["role"]),
+            role=_role_or_viewer(row.get("role")),
             created_at=int(created_raw) if isinstance(created_raw, (int, float, str)) else 0,
             last_login_at=(int(last_raw) if isinstance(last_raw, (int, float, str)) else None),
             email=str(email_raw) if isinstance(email_raw, str) and email_raw else None,

@@ -28,9 +28,6 @@ public final class AuthStore {
     public static final String SESSION_PREFIX = "auth:session:";
     public static final long DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60;
 
-    public static final String ROLE_ADMIN = "admin";
-    public static final String ROLE_VIEWER = "viewer";
-    public static final Set<String> VALID_ROLES = Set.of(ROLE_ADMIN, ROLE_VIEWER);
 
     public static final String ENV_ADMIN_USER = "TASKITO_DASHBOARD_ADMIN_USER";
     public static final String ENV_ADMIN_PASSWORD = "TASKITO_DASHBOARD_ADMIN_PASSWORD";
@@ -63,10 +60,12 @@ public final class AuthStore {
      * cross-process CAS, so a second writer in another process is still a
      * theoretical race (bounded to first-run setup, which is single-shot).
      */
-    public synchronized User createUser(String username, String password, String role) {
+    public synchronized User createUser(String username, String password, Role role) {
         validateUsername(username);
         validatePassword(password);
-        validateRole(role);
+        if (role == null) {
+            throw DashboardError.badRequest("invalid role");
+        }
         if (rawUsers().containsKey(username)) {
             throw DashboardError.badRequest("user already exists");
         }
@@ -78,7 +77,7 @@ public final class AuthStore {
         long now = nowMillis();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("password_hash", hash);
-        row.put("role", role);
+        row.put("role", role.wire());
         row.put("created_at", now);
         row.put("last_login_at", null);
         users.put(username, row);
@@ -171,11 +170,11 @@ public final class AuthStore {
             saveUsers(users);
             return toUser(username, row);
         }
-        String role = oauthBootstrapRole(email, emailVerified, adminEmails);
+        Role role = oauthBootstrapRole(email, emailVerified, adminEmails);
         long now = nowMillis();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("password_hash", PasswordHasher.oauthSentinel(slot));
-        row.put("role", role);
+        row.put("role", role.wire());
         row.put("created_at", now);
         row.put("last_login_at", now);
         row.put("email", email);
@@ -190,30 +189,30 @@ public final class AuthStore {
      * listed address. Everyone else — including the very first user — gets
      * viewer, so a stray first OAuth login can never win admin.
      */
-    public static String oauthBootstrapRole(String email, boolean emailVerified, List<String> adminEmails) {
+    public static Role oauthBootstrapRole(String email, boolean emailVerified, List<String> adminEmails) {
         if (!emailVerified || email == null || email.isBlank()) {
-            return ROLE_VIEWER;
+            return Role.VIEWER;
         }
         String normalised = email.toLowerCase(Locale.ROOT);
         boolean listed = adminEmails != null
                 && adminEmails.stream().anyMatch(e -> e.toLowerCase(Locale.ROOT).equals(normalised));
-        return listed ? ROLE_ADMIN : ROLE_VIEWER;
+        return listed ? Role.ADMIN : Role.VIEWER;
     }
 
     // ---- sessions ----------------------------------------------------------
 
-    public Session createSession(String username, String role) {
+    public Session createSession(String username, Role role) {
         return createSession(username, role, DEFAULT_SESSION_TTL_SECONDS);
     }
 
-    public Session createSession(String username, String role, long ttlSeconds) {
+    public Session createSession(String username, Role role, long ttlSeconds) {
         String token = Tokens.session();
         String csrf = Tokens.session();
         long now = nowSeconds();
         long expires = now + ttlSeconds;
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("username", username);
-        row.put("role", role);
+        row.put("role", role.wire());
         row.put("created_at", now);
         row.put("expires_at", expires);
         row.put("csrf_token", csrf);
@@ -239,7 +238,7 @@ public final class AuthStore {
             session = new Session(
                     token,
                     (String) data.get("username"),
-                    (String) data.get("role"),
+                    Role.orViewer((String) data.get("role")),
                     asLong(data.get("created_at")),
                     asLong(data.get("expires_at")),
                     (String) data.get("csrf_token"));
@@ -317,7 +316,7 @@ public final class AuthStore {
         if (getUser(username).isPresent()) {
             return;
         }
-        createUser(username, password, ROLE_ADMIN);
+        createUser(username, password, Role.ADMIN);
     }
 
     // ---- helpers -----------------------------------------------------------
@@ -339,7 +338,7 @@ public final class AuthStore {
         return new User(
                 username,
                 (String) row.get("password_hash"),
-                (String) row.get("role"),
+                Role.orViewer((String) row.get("role")),
                 asLong(row.get("created_at")),
                 row.get("last_login_at") == null ? null : asLong(row.get("last_login_at")),
                 (String) row.get("email"),
@@ -379,9 +378,4 @@ public final class AuthStore {
         }
     }
 
-    private static void validateRole(String role) {
-        if (!VALID_ROLES.contains(role)) {
-            throw DashboardError.badRequest("invalid role");
-        }
-    }
 }

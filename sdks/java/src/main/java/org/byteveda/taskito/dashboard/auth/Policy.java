@@ -65,7 +65,7 @@ public final class Policy {
             throw DashboardError.forbidden("csrf_failed");
         }
         if (requiresAdmin(path, method)
-                && !AuthStore.ROLE_ADMIN.equals(ctx.session().role())) {
+                && ctx.session().role() != Role.ADMIN) {
             throw DashboardError.forbidden("forbidden");
         }
     }

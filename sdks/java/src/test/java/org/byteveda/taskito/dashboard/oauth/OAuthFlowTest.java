@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import org.byteveda.taskito.dashboard.InMemorySettings;
 import org.byteveda.taskito.dashboard.auth.AuthStore;
+import org.byteveda.taskito.dashboard.auth.Role;
 import org.byteveda.taskito.dashboard.auth.oauth.OAuthFlow;
 import org.byteveda.taskito.dashboard.auth.oauth.OAuthStateStore;
 import org.byteveda.taskito.dashboard.auth.oauth.config.OAuthConfig;
@@ -58,7 +59,7 @@ class OAuthFlowTest {
         String state = fake.lastState.state();
         OAuthFlow.CallbackResult result = flow.handleCallback("fake", "code", state, null);
         assertEquals("fake:subject-1", result.session().username());
-        assertEquals("viewer", result.session().role()); // admin comes only from the allowlist
+        assertEquals(Role.VIEWER, result.session().role()); // admin comes only from the allowlist
         assertEquals("/next", result.nextUrl());
         assertTrue(authStore.getUser("fake:subject-1").isPresent());
     }

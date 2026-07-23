@@ -9,7 +9,7 @@ package org.byteveda.taskito.dashboard.auth;
 public record User(
         String username,
         String passwordHash,
-        String role,
+        Role role,
         long createdAt,
         Long lastLoginAt,
         String email,

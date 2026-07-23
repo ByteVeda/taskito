@@ -23,9 +23,9 @@ class AuthStoreTest {
     void createsAndAuthenticatesUsers() {
         AuthStore store = store();
         assertEquals(0, store.countUsers());
-        User user = store.createUser("alice", "password123", "admin");
+        User user = store.createUser("alice", "password123", Role.ADMIN);
         assertEquals("alice", user.username());
-        assertEquals("admin", user.role());
+        assertEquals(Role.ADMIN, user.role());
         assertNull(user.lastLoginAt());
         assertEquals(1, store.countUsers());
 
@@ -42,30 +42,33 @@ class AuthStoreTest {
     @Test
     void rejectsDuplicatesAndInvalidInput() {
         AuthStore store = store();
-        store.createUser("bob", "password123", "admin");
-        assertThrows(DashboardError.class, () -> store.createUser("bob", "password123", "admin"));
-        assertThrows(DashboardError.class, () -> store.createUser("bad name", "password123", "admin"));
-        assertThrows(DashboardError.class, () -> store.createUser("carol", "short", "admin"));
-        assertThrows(DashboardError.class, () -> store.createUser("carol", "password123", "superuser"));
+        store.createUser("bob", "password123", Role.ADMIN);
+        assertThrows(DashboardError.class, () -> store.createUser("bob", "password123", Role.ADMIN));
+        assertThrows(DashboardError.class, () -> store.createUser("bad name", "password123", Role.ADMIN));
+        assertThrows(DashboardError.class, () -> store.createUser("carol", "short", Role.ADMIN));
+        assertThrows(DashboardError.class, () -> store.createUser("carol", "password123", null));
+        // An unknown role is no longer representable at the call site; a stored one
+        // still has to fail closed.
+        assertEquals(Role.VIEWER, Role.orViewer("superuser"));
     }
 
     @Test
     void sessionsUseSecondsAndExpire() {
         AuthStore store = store();
-        Session session = store.createSession("alice", "admin");
+        Session session = store.createSession("alice", Role.ADMIN);
         assertEquals(AuthStore.DEFAULT_SESSION_TTL_SECONDS, session.expiresAt() - session.createdAt());
         assertTrue(session.createdAt() < 1_000_000_000_000L); // seconds, not millis
         assertTrue(store.getSession(session.token()).isPresent());
 
-        Session expired = store.createSession("alice", "admin", -10);
+        Session expired = store.createSession("alice", Role.ADMIN, -10);
         assertTrue(store.getSession(expired.token()).isEmpty());
     }
 
     @Test
     void prunesExpiredSessions() {
         AuthStore store = store();
-        Session valid = store.createSession("alice", "admin", 3600);
-        store.createSession("alice", "admin", -10);
+        Session valid = store.createSession("alice", Role.ADMIN, 3600);
+        store.createSession("alice", Role.ADMIN, -10);
         assertEquals(1, store.pruneExpiredSessions());
         assertTrue(store.getSession(valid.token()).isPresent());
     }
@@ -73,8 +76,8 @@ class AuthStoreTest {
     @Test
     void deletingUserClearsSessions() {
         AuthStore store = store();
-        store.createUser("alice", "password123", "admin");
-        Session session = store.createSession("alice", "admin");
+        store.createUser("alice", "password123", Role.ADMIN);
+        Session session = store.createSession("alice", Role.ADMIN);
         store.deleteUser("alice");
         assertEquals(0, store.countUsers());
         assertTrue(store.getSession(session.token()).isEmpty());
@@ -83,13 +86,13 @@ class AuthStoreTest {
     @Test
     void oauthBootstrapRolePrecedence() {
         // Unverified / missing email never becomes admin.
-        assertEquals("viewer", AuthStore.oauthBootstrapRole("a@x.com", false, List.of()));
-        assertEquals("viewer", AuthStore.oauthBootstrapRole(null, true, List.of()));
+        assertEquals(Role.VIEWER, AuthStore.oauthBootstrapRole("a@x.com", false, List.of()));
+        assertEquals(Role.VIEWER, AuthStore.oauthBootstrapRole(null, true, List.of()));
         // Admin-email list is the only path to admin (case-insensitive).
-        assertEquals("admin", AuthStore.oauthBootstrapRole("A@X.com", true, List.of("a@x.com")));
-        assertEquals("viewer", AuthStore.oauthBootstrapRole("b@x.com", true, List.of("a@x.com")));
+        assertEquals(Role.ADMIN, AuthStore.oauthBootstrapRole("A@X.com", true, List.of("a@x.com")));
+        assertEquals(Role.VIEWER, AuthStore.oauthBootstrapRole("b@x.com", true, List.of("a@x.com")));
         // No admin list: everyone — including the first user — is a viewer.
-        assertEquals("viewer", AuthStore.oauthBootstrapRole("c@x.com", true, List.of()));
+        assertEquals(Role.VIEWER, AuthStore.oauthBootstrapRole("c@x.com", true, List.of()));
     }
 
     @Test
@@ -97,12 +100,12 @@ class AuthStoreTest {
         AuthStore store = store();
         User created = store.getOrCreateOauthUser("google", "123", "a@x.com", "Ann", true, List.of("a@x.com"));
         assertEquals("google:123", created.username());
-        assertEquals("admin", created.role()); // allowlisted
+        assertEquals(Role.ADMIN, created.role()); // allowlisted
         assertTrue(created.isOauth());
 
         User refreshed = store.getOrCreateOauthUser("google", "123", "new@x.com", "Ann N", true, List.of("z@x.com"));
         assertEquals("google:123", refreshed.username());
-        assertEquals("admin", refreshed.role()); // role preserved
+        assertEquals(Role.ADMIN, refreshed.role()); // role preserved
         assertEquals("new@x.com", refreshed.email());
         assertEquals(1, store.countUsers());
     }
@@ -127,8 +130,8 @@ class AuthStoreTest {
     @Test
     void changePasswordInvalidatesOldCredential() {
         AuthStore store = store();
-        store.createUser("alice", "password123", "admin");
-        Session existing = store.createSession("alice", "admin");
+        store.createUser("alice", "password123", Role.ADMIN);
+        Session existing = store.createSession("alice", Role.ADMIN);
         store.updatePassword("alice", "new-password!");
         assertNull(store.authenticate("alice", "password123"));
         assertNotNull(store.authenticate("alice", "new-password!"));
