@@ -37,6 +37,7 @@ import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.model.EffectiveRetention;
+import org.byteveda.taskito.model.RetentionPreview;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
@@ -77,6 +78,7 @@ import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.LogTopicReader;
+import org.byteveda.taskito.worker.Retention;
 import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.GateConfig;
 import org.byteveda.taskito.workflows.Step;
@@ -695,6 +697,17 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public Optional<EffectiveRetention> effectiveRetention() {
         return backend.effectiveRetentionJson().map(json -> decode(json, EffectiveRetention.class));
+    }
+
+    @Override
+    public RetentionPreview dryRunRetention() {
+        return decode(backend.dryRunRetentionJson(null), RetentionPreview.class);
+    }
+
+    @Override
+    public RetentionPreview dryRunRetention(Retention retention) {
+        String spec = retention == null ? null : encode(retention.toMap());
+        return decode(backend.dryRunRetentionJson(spec), RetentionPreview.class);
     }
 
     @Override

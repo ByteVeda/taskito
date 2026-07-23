@@ -7,9 +7,9 @@ use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::borrow_queue;
-use crate::convert::{to_json, DeadJobView, ReplayEntryView};
+use crate::convert::{parse_json, to_json, DeadJobView, ReplayEntryView, RetentionSpec};
 use crate::error::BindingError;
-use crate::ffi::{guard, new_string, new_string_array, read_string};
+use crate::ffi::{guard, new_string, new_string_array, read_optional_string, read_string};
 
 /// `String listDead(long handle, long limit, long offset)` — dead-letter entries.
 #[no_mangle]
@@ -269,6 +269,38 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_effectiveR
             Some(json) => new_string(env, json),
             None => Ok(std::ptr::null_mut()),
         }
+    })
+}
+
+/// `String dryRunRetention(long handle, String retentionJson)` — count what a
+/// retention purge would delete right now, without deleting anything.
+/// `retentionJson` is a `RetentionSpec` (camelCase seconds) to preview those
+/// candidate windows, or `null` to preview the recommended defaults. Returns
+/// the preview as a JSON document. See `BINDING_CONTRACT.md`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_dryRunRetention<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    retention_json: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        // A null spec previews the recommended defaults; a present one previews
+        // exactly those candidate windows (an all-unset spec = a disabled policy),
+        // overriding whatever a worker for this queue would apply.
+        let config = match read_optional_string(env, &retention_json)? {
+            Some(json) => Some(parse_json::<RetentionSpec>(&json, "retention spec")?.to_config()),
+            None => None,
+        };
+        let preview = taskito_core::scheduler::retention::dry_run_json(
+            &queue.storage,
+            config.as_ref(),
+            None,
+            queue.namespace.as_deref(),
+            now_millis(),
+        )?;
+        new_string(env, preview)
     })
 }
 

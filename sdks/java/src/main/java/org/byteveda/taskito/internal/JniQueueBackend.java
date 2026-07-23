@@ -237,6 +237,11 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String dryRunRetentionJson(String retentionJson) {
+        return withOpenHandle(() -> NativeQueue.dryRunRetention(handle, retentionJson));
+    }
+
+    @Override
     public String listSettingsJson() {
         return withOpenHandle(() -> NativeQueue.listSettings(handle));
     }

@@ -7,6 +7,7 @@ import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DagEdge;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.EffectiveRetention;
+import org.byteveda.taskito.model.RetentionPreview;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.QueueStats;
@@ -236,6 +237,34 @@ final class Contract {
         m.put("namespace", r == null ? null : r.namespace);
         m.put("reported_at", r == null ? null : r.reportedAt);
         m.put("windows", windows);
+        return m;
+    }
+
+    /** The dry-run preview: per-table counts a purge would remove, plus the
+     *  windows they were computed against. Always present — computed in-process. */
+    static Map<String, Object> retentionDryRun(RetentionPreview p) {
+        Map<String, Object> windows = new LinkedHashMap<>();
+        windows.put("task_logs_ttl_ms", p.windows.taskLogsMs);
+        windows.put("archived_jobs_ttl_ms", p.windows.archivedJobsMs);
+        windows.put("job_errors_ttl_ms", p.windows.jobErrorsMs);
+        windows.put("task_metrics_ttl_ms", p.windows.taskMetricsMs);
+        windows.put("dead_letter_ttl_ms", p.windows.deadLetterMs);
+
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("task_logs", p.counts.taskLogs);
+        counts.put("archived_jobs", p.counts.archivedJobs);
+        counts.put("job_errors", p.counts.jobErrors);
+        counts.put("task_metrics", p.counts.taskMetrics);
+        counts.put("dead_letter", p.counts.deadLetter);
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("enabled", p.enabled);
+        m.put("defaulted", p.defaulted);
+        m.put("namespace", p.namespace);
+        m.put("reference_time", p.referenceTime);
+        m.put("windows", windows);
+        m.put("counts", counts);
+        m.put("total", p.total);
         return m;
     }
 
