@@ -2248,6 +2248,10 @@ fn postgres_storage_tests() {
         }
     };
 
+    // This raw connection reaches libpq before `PostgresStorage` can, so claim
+    // OpenSSL's initialization here too — see `init_openssl_without_atexit`.
+    openssl_sys::init();
+
     // Reset the `taskito` schema so the count-exact contract is deterministic on
     // a persistent test DB (the Postgres analogue of the Redis suite's FLUSHDB).
     // `PostgresStorage::new` recreates the schema and re-runs migrations. Harmless

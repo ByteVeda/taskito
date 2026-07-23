@@ -43,6 +43,21 @@ fn validate_schema_name(schema: &str) -> Result<()> {
     Ok(())
 }
 
+/// Initialize OpenSSL ahead of libpq, with its `atexit` cleanup suppressed
+/// (`openssl_sys::init` passes `OPENSSL_INIT_NO_ATEXIT`).
+///
+/// r2d2 opens connections on detached worker threads that can outlive the pool,
+/// so libpq/OpenSSL may still be running on one of them when the process exits.
+/// OpenSSL's default `atexit` teardown racing with threads still inside the
+/// library is a documented cause of exit-time segfaults; suppressing it is the
+/// standard remedy (see the OpenSSL `OPENSSL_INIT_NO_ATEXIT` docs). Only the
+/// first initializer's flags count, so claiming it here — before the first
+/// connection — wins the race; skipping cleanup is free because the OS reclaims
+/// the memory at exit anyway. Idempotent, so repeated pool construction is cheap.
+fn init_openssl_without_atexit() {
+    openssl_sys::init();
+}
+
 /// Quote a SQL identifier for safe interpolation. Postgres can't bind
 /// identifiers as parameters, and while `validate_schema_name` already
 /// restricts the schema to `[A-Za-z0-9_]`, quoting here makes the structural
@@ -90,6 +105,7 @@ impl PostgresStorage {
 
     fn build(database_url: &str, pool_size: u32, schema: &str) -> Result<Self> {
         validate_schema_name(schema)?;
+        init_openssl_without_atexit();
 
         let manager = ConnectionManager::<PgConnection>::new(database_url);
         let pool = Pool::builder()
