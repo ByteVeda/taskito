@@ -52,6 +52,7 @@ import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
 import org.byteveda.taskito.model.TopicMessage;
+import org.byteveda.taskito.model.TopicStat;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueDecision;
@@ -922,6 +923,26 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public List<Subscription> listSubscriptions(String topic) {
         return decodeList(backend.listSubscriptionsJson(topic), Subscription.class);
+    }
+
+    @Override
+    public List<TopicStat> topicStats() {
+        return decodeList(backend.topicBacklogStatsJson(), TopicStat.class);
+    }
+
+    @Override
+    public List<TopicStat> topicStats(String topic) {
+        // A null topic is "no filter", matching listSubscriptions(null).
+        if (topic == null) {
+            return topicStats();
+        }
+        List<TopicStat> filtered = new ArrayList<>();
+        for (TopicStat stat : topicStats()) {
+            if (stat.topic.equals(topic)) {
+                filtered.add(stat);
+            }
+        }
+        return filtered;
     }
 
     @Override

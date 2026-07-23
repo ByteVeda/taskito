@@ -2,6 +2,8 @@ package org.byteveda.taskito.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,14 +12,20 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
 import org.byteveda.taskito.model.Subscription;
+import org.byteveda.taskito.model.TopicStat;
 import org.byteveda.taskito.pubsub.PublishOptions;
 import org.byteveda.taskito.pubsub.SubscriptionOptions;
 import org.byteveda.taskito.task.Task;
@@ -301,6 +309,100 @@ class PubSubTest {
                 assertTrue(queue.publish("orders", "o-1").isEmpty());
             }
         }
+    }
+
+    @Test
+    void topicStatsReportsOneBacklogRowPerSubscription(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe(
+                    "orders",
+                    SEND_EMAIL,
+                    SubscriptionOptions.builder().name("email").build());
+            queue.subscribe(
+                    "orders",
+                    TRACK_ORDER,
+                    SubscriptionOptions.builder().name("analytics").build());
+            queue.publish("orders", "o-1");
+            queue.publish("orders", "o-2");
+
+            Map<String, TopicStat> stats = bySubscription(queue.topicStats("orders"));
+            assertEquals(Set.of("email", "analytics"), stats.keySet());
+            TopicStat email = stats.get("email");
+            assertEquals("orders", email.topic);
+            assertEquals(SEND_EMAIL.name(), email.taskName);
+            assertEquals("default", email.queue);
+            assertTrue(email.active);
+            assertTrue(email.durable);
+            assertEquals(2, email.pending);
+            assertEquals(0, email.running);
+            assertEquals(0, email.dead);
+            assertNotNull(email.oldestPendingAgeMs);
+            assertTrue(email.oldestPendingAgeMs >= 0);
+            assertEquals(2, stats.get("analytics").pending);
+        }
+    }
+
+    @Test
+    void topicStatsReportsZerosForAnIdleSubscription(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+
+            List<TopicStat> stats = queue.topicStats("orders");
+            assertEquals(1, stats.size());
+            TopicStat idle = stats.get(0);
+            assertEquals(0, idle.pending);
+            assertEquals(0, idle.running);
+            assertEquals(0, idle.dead);
+            assertNull(idle.oldestPendingAgeMs);
+        }
+    }
+
+    @Test
+    void topicStatsFiltersByTopicAndIgnoresNonPubSubJobs(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe(
+                    "orders",
+                    SEND_EMAIL,
+                    SubscriptionOptions.builder().name("email").build());
+            queue.enqueue(Task.of("pubsub.plain", String.class), "p-1");
+
+            assertEquals(1, queue.topicStats().size());
+            assertEquals("email", queue.topicStats().get(0).subscription);
+            assertTrue(queue.topicStats("other-topic").isEmpty());
+            // A null topic is "no filter", not "a topic nothing matches".
+            assertEquals(1, queue.topicStats(null).size());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void topicStatsCountsAFailedDeliveryAsDead(@TempDir Path dir) throws Exception {
+        Task<String> flaky = Task.of("pubsub.flaky", String.class).maxRetries(0);
+        try (Taskito queue = open(dir)) {
+            queue.subscribe(
+                    "orders", flaky, SubscriptionOptions.builder().name("flaky").build());
+
+            CountDownLatch dead = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .handle(flaky, (String payload) -> {
+                        throw new IllegalStateException("boom");
+                    })
+                    .on(EventName.DEAD, event -> dead.countDown())
+                    .start()) {
+                queue.publish("orders", "o-1");
+                assertTrue(dead.await(20, TimeUnit.SECONDS), "the delivery should dead-letter");
+            }
+
+            TopicStat stat = queue.topicStats("orders").get(0);
+            assertEquals(1, stat.dead);
+            assertEquals(0, stat.pending);
+        }
+    }
+
+    private static Map<String, TopicStat> bySubscription(List<TopicStat> stats) {
+        Map<String, TopicStat> bySubscription = new LinkedHashMap<>();
+        stats.forEach(stat -> bySubscription.put(stat.subscription, stat));
+        return bySubscription;
     }
 
     private static List<String> ids(List<Job> jobs) {

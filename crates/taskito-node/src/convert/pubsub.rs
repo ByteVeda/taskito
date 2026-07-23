@@ -3,6 +3,7 @@
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use taskito_core::storage::records::{Subscription, Topic, TopicLogStats, TopicMessage};
+use taskito_core::storage::SubscriptionBacklogStats;
 
 /// A topic subscription: routes messages published to `topic` to `taskName`
 /// jobs on `queue`, one delivery per active subscription.
@@ -25,6 +26,43 @@ pub fn subscription_to_js(row: Subscription) -> JsSubscription {
         queue: row.queue,
         active: row.active,
         durable: row.durable,
+    }
+}
+
+/// Backlog snapshot for one topic subscription. One entry per *registered*
+/// subscription — durable or ephemeral, active or paused — even at zero
+/// backlog, so a caller renders the full subscriber list from a single call.
+#[napi(object)]
+pub struct JsTopicStat {
+    pub topic: String,
+    pub subscription: String,
+    pub task_name: String,
+    pub queue: String,
+    pub active: bool,
+    pub durable: bool,
+    /// Deliveries waiting to run.
+    pub pending: i64,
+    /// Deliveries currently executing.
+    pub running: i64,
+    /// Deliveries in the dead-letter queue.
+    pub dead: i64,
+    /// Age (ms) of the oldest still-pending delivery, absent at zero backlog.
+    pub oldest_pending_age_ms: Option<i64>,
+}
+
+/// Convert a core [`SubscriptionBacklogStats`] into its JS-facing shape.
+pub fn topic_stat_to_js(stat: SubscriptionBacklogStats) -> JsTopicStat {
+    JsTopicStat {
+        topic: stat.topic,
+        subscription: stat.subscription_name,
+        task_name: stat.task_name,
+        queue: stat.queue,
+        active: stat.active,
+        durable: stat.durable,
+        pending: stat.pending,
+        running: stat.running,
+        dead: stat.dead,
+        oldest_pending_age_ms: stat.oldest_pending_age_ms,
     }
 }
 

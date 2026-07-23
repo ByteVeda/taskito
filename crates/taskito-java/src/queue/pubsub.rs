@@ -15,7 +15,7 @@ use taskito_core::Storage;
 use crate::backend;
 use crate::convert::{
     build_publish_request, parse_json, to_json, JobView, PublishOptions, SubscriptionView,
-    TopicLogStatsView, TopicMessageView, TopicView,
+    TopicLogStatsView, TopicMessageView, TopicStatsView, TopicView,
 };
 use crate::ffi::{guard, new_string, read_bytes, read_optional_string, read_string};
 
@@ -151,6 +151,24 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_setSubscri
             &subscription_name,
             active != 0,
         )?))
+    })
+}
+
+/// `String topicBacklogStats(long handle)` — a JSON array of `TopicStatsView`,
+/// one backlog snapshot per registered subscription (even at zero backlog).
+/// Counts are aggregated live off the delivery-attribution indexes, so they can
+/// never drift the way a maintained counter would.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_topicBacklogStats<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let stats = queue.storage.topic_backlog_stats()?;
+        let views: Vec<TopicStatsView> = stats.iter().map(TopicStatsView::from).collect();
+        new_string(env, to_json(&views)?)
     })
 }
 

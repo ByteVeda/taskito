@@ -394,6 +394,11 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String topicBacklogStatsJson() {
+        return withOpenHandle(() -> NativeQueue.topicBacklogStats(handle));
+    }
+
+    @Override
     public long reapEphemeralSubscriptions() {
         return withOpenHandle(() -> NativeQueue.reapEphemeralSubscriptions(handle));
     }

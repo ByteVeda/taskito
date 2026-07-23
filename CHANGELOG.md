@@ -27,6 +27,10 @@ underlying Rust crates are released together, in lock-step.
 
 - **Node `request` resource scope.** A fresh instance on every `useResource()` call, each
   disposed when the task ends — matching the Java scope of the same name.
+- **Pub/sub backlog stats in the Node and Java SDKs.** `queue.topicStats(topic?)` (Node) and
+  `topicStats()` / `topicStats(topic)` (Java) return the per-subscription snapshot Python has
+  as `topic_stats()`: `pending`, `running`, `dead`, and `oldestPendingAgeMs`, with a row for
+  every registered subscription even at zero backlog.
 - Job outcome events report how long the task ran: `durationMs()` on Java's `OutcomeEvent`,
   `durationMs` on Node's, and `duration_ms` on Python's job event payloads. Java also gains
   `NodeSnapshot.durationMs()` / `compensationDurationMs()` and `TaskContext.elapsedMs()`.
