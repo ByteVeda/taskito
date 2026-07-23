@@ -160,6 +160,15 @@ public final class Step {
             return this;
         }
 
+        /**
+         * Type-safe variant of {@link #condition(String)} — run this step only when
+         * {@code condition} holds. Prefer this over the string overload.
+         */
+        public Builder condition(WorkflowCondition condition) {
+            this.condition = condition == null ? null : condition.wire();
+            return this;
+        }
+
         /** Run this step only if every predecessor completed (the default). */
         public Builder onSuccess() {
             return condition("on_success");

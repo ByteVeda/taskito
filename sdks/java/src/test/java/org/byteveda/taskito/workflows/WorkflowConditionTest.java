@@ -112,6 +112,18 @@ class WorkflowConditionTest {
     }
 
     @Test
+    void conditionEnumOverloadMatchesStringForm() {
+        assertEquals("on_success", WorkflowCondition.ON_SUCCESS.wire());
+        assertEquals(WorkflowCondition.ALWAYS, WorkflowCondition.fromWire("always"));
+        Step viaEnum = Step.of("s", RECOVER, "x")
+                .condition(WorkflowCondition.ON_FAILURE)
+                .build();
+        Step viaString = Step.of("s", RECOVER, "x").onFailure().build();
+        assertEquals(viaString.condition, viaEnum.condition);
+        assertEquals("on_failure", viaEnum.condition);
+    }
+
+    @Test
     @Timeout(30)
     void callableConditionRunsWhenTrue(@TempDir Path dir) throws Exception {
         assertCallable(dir, 10, true);
