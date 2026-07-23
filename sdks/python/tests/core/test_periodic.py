@@ -36,17 +36,22 @@ def registered(queue: Queue, poll_until: Any) -> Generator[Queue]:
 
     worker = threading.Thread(target=queue.run_worker, daemon=True)
     worker.start()
-    poll_until(
-        lambda: len(queue.list_periodic()) == 2,
-        timeout=30,
-        message="periodic schedules never reached the catalog",
-    )
-    yield queue
-    queue.shutdown()
-    worker.join(timeout=5)
+    try:
+        poll_until(
+            lambda: len(queue.list_periodic()) == 2,
+            timeout=30,
+            message="periodic schedules never reached the catalog",
+        )
+        yield queue
+    finally:
+        # Also covers a failed poll_until, which would otherwise strand the
+        # worker and its database handle for every later test.
+        queue.shutdown()
+        worker.join(timeout=5)
 
 
 def _find(schedules: list[PeriodicInfo], name: str) -> PeriodicInfo:
+    """The schedule registered under ``name``, or a failed assertion."""
     match = [p for p in schedules if p.name == name]
     assert match, f"expected periodic schedule '{name}'"
     return match[0]
