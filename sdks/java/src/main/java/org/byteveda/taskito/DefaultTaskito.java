@@ -932,6 +932,10 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
 
     @Override
     public List<TopicStat> topicStats(String topic) {
+        // A null topic is "no filter", matching listSubscriptions(null).
+        if (topic == null) {
+            return topicStats();
+        }
         List<TopicStat> filtered = new ArrayList<>();
         for (TopicStat stat : topicStats()) {
             if (stat.topic.equals(topic)) {

@@ -468,7 +468,7 @@ public interface Taskito extends AutoCloseable {
      */
     List<TopicStat> topicStats();
 
-    /** As {@link #topicStats()}, filtered to one topic. */
+    /** As {@link #topicStats()}, filtered to one topic; a {@code null} topic means no filter. */
     List<TopicStat> topicStats(String topic);
 
     /** Distinct topics that currently have at least one subscription. */

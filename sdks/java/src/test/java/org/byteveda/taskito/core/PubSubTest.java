@@ -369,6 +369,8 @@ class PubSubTest {
             assertEquals(1, queue.topicStats().size());
             assertEquals("email", queue.topicStats().get(0).subscription);
             assertTrue(queue.topicStats("other-topic").isEmpty());
+            // A null topic is "no filter", not "a topic nothing matches".
+            assertEquals(1, queue.topicStats(null).size());
         }
     }
 
