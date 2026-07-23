@@ -14,7 +14,7 @@ from taskito._taskito import PyWorkflowBuilder
 from taskito.enums import coerce_enum
 
 from . import analysis as _analysis
-from .types import DiagramFormat, FanStrategy, GateAction
+from .types import DiagramFormat, FanStrategy, GateAction, WorkflowCondition
 from .visualization import nodes_and_edges_from_steps, render_dot, render_mermaid
 
 if TYPE_CHECKING:
@@ -33,7 +33,6 @@ class HasTaskName(Protocol):
     def _task_name(self) -> str: ...
 
 
-_VALID_CONDITIONS = frozenset({"on_success", "on_failure", "always"})
 _VALID_ON_FAILURE = frozenset({"fail_fast", "continue"})
 
 
@@ -79,14 +78,14 @@ class _Step:
     priority: int | None = None
     fan_out: FanStrategy | None = None
     fan_in: FanStrategy | None = None
-    condition: str | Callable | None = None
+    condition: WorkflowCondition | Callable | None = None
     gate_config: GateConfig | None = None
     sub_workflow: SubWorkflowRef | None = None
     # ``None`` = no compensation for this step; a string = the compensation
     # task name; the ``INHERIT_COMPENSATOR`` sentinel = look up the
     # decorator-level ``@queue.task(compensates=...)`` default when the
     # workflow is compiled.
-    compensates: str | None | _InheritCompensator = field(
+    compensates: str | _InheritCompensator | None = field(
         default_factory=lambda: INHERIT_COMPENSATOR
     )
 
@@ -145,8 +144,8 @@ class Workflow:
         priority: int | None = None,
         fan_out: FanStrategy | str | None = None,
         fan_in: FanStrategy | str | None = None,
-        condition: str | Callable | None = None,
-        compensates: HasTaskName | str | None | _InheritCompensator = INHERIT_COMPENSATOR,
+        condition: WorkflowCondition | str | Callable | None = None,
+        compensates: HasTaskName | str | _InheritCompensator | None = INHERIT_COMPENSATOR,
     ) -> Workflow:
         """Add a step to the workflow.
 
@@ -164,10 +163,11 @@ class Workflow:
                 return value into one job per element.
             fan_in: Fan-in strategy. ``"all"`` collects all fan-out children's
                 results into a list passed to this step.
-            condition: Optional gate expression evaluated against upstream
-                results. Either a string DSL expression or a callable
-                receiving the workflow context; when it returns falsy the
-                step (and its descendants) are skipped.
+            condition: Optional gate on upstream results. A
+                :class:`~taskito.workflows.types.WorkflowCondition` (or its
+                string — ``"on_success"``, ``"on_failure"``, ``"always"``), or a
+                callable receiving the workflow context; when it returns falsy
+                the step (and its descendants) are skipped.
 
         Returns:
             ``self`` for chaining.
@@ -225,30 +225,27 @@ class Workflow:
                     f"step '{name}': fan_in predecessor '{predecessors[0]}' must have fan_out set"
                 )
 
-        is_invalid_condition = (
-            condition is not None
-            and not callable(condition)
-            and condition not in _VALID_CONDITIONS
-        )
-        if is_invalid_condition:
-            raise ValueError(
-                f"step '{name}': condition must be one of "
-                f"{sorted(_VALID_CONDITIONS)} or a callable, got '{condition}'"
+        if condition is not None and not callable(condition):
+            condition = coerce_enum(
+                WorkflowCondition, condition, param=f"step '{name}': condition"
             )
 
         sub_wf = task if isinstance(task, SubWorkflowRef) else None
 
         # Resolve the compensates= argument to either a task-name string,
         # ``None`` (disabled), or the INHERIT sentinel (look up at compile).
-        resolved_compensates: str | None | _InheritCompensator
+        resolved_compensates: str | _InheritCompensator | None
         if isinstance(compensates, _InheritCompensator):
             resolved_compensates = INHERIT_COMPENSATOR
         elif compensates is None:
             resolved_compensates = None
         elif isinstance(compensates, str):
             resolved_compensates = compensates
-        elif hasattr(compensates, "name"):  # TaskWrapper / HasTaskName
-            resolved_compensates = compensates.name
+        elif getattr(compensates, "_task_name", None) or getattr(compensates, "name", None):
+            # HasTaskName exposes `_task_name`; a TaskWrapper also exposes `.name`.
+            resolved_compensates = getattr(compensates, "_task_name", None) or getattr(
+                compensates, "name", None
+            )
         else:
             raise TypeError("compensates= must be a TaskWrapper, task-name string, or None")
 
@@ -284,7 +281,7 @@ class Workflow:
         name: str,
         *,
         after: str | list[str] | None = None,
-        condition: str | Callable | None = None,
+        condition: WorkflowCondition | str | Callable | None = None,
         timeout: float | None = None,
         on_timeout: GateAction | str = GateAction.REJECT,
         message: str | Callable | None = None,
@@ -310,6 +307,10 @@ class Workflow:
         if "[" in name:
             raise ValueError(f"step '{name}': names must not contain '['")
         timeout_action = coerce_enum(GateAction, on_timeout, param=f"gate '{name}': on_timeout")
+        if condition is not None and not callable(condition):
+            condition = coerce_enum(
+                WorkflowCondition, condition, param=f"gate '{name}': condition"
+            )
 
         if after is None:
             predecessors: list[str] = []
@@ -461,8 +462,8 @@ class Workflow:
 
         for step in self._steps.values():
             str_condition: str | None = None
-            if isinstance(step.condition, str):
-                str_condition = step.condition
+            if isinstance(step.condition, WorkflowCondition):
+                str_condition = step.condition.value
             elif callable(step.condition):
                 callable_conditions[step.name] = step.condition
                 str_condition = "callable"

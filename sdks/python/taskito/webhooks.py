@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
-from taskito.dashboard.delivery_store import DeliveryStore
+from taskito.dashboard.delivery_store import DeliveryStatus, DeliveryStore
 from taskito.dashboard.url_safety import UnsafeWebhookUrl, validate_webhook_url
 from taskito.events import EventType
 
@@ -243,7 +243,7 @@ class WebhookManager:
                         self._record(
                             wh,
                             payload,
-                            status="delivered",
+                            status=DeliveryStatus.DELIVERED,
                             attempts=attempt_count,
                             response_code=last_status,
                             response_body=last_response_body,
@@ -268,7 +268,7 @@ class WebhookManager:
                     self._record(
                         wh,
                         payload,
-                        status="failed",
+                        status=DeliveryStatus.FAILED,
                         attempts=attempt_count,
                         response_code=last_status,
                         response_body=last_response_body,
@@ -287,7 +287,7 @@ class WebhookManager:
                 self._record(
                     wh,
                     payload,
-                    status="failed",
+                    status=DeliveryStatus.FAILED,
                     attempts=attempt_count,
                     response_code=None,
                     response_body=None,
@@ -319,7 +319,7 @@ class WebhookManager:
         self._record(
             wh,
             payload,
-            status="dead",
+            status=DeliveryStatus.DEAD,
             attempts=attempt_count,
             response_code=last_status,
             response_body=last_response_body,
@@ -334,7 +334,7 @@ class WebhookManager:
         wh: dict[str, Any],
         payload: dict[str, Any],
         *,
-        status: str,
+        status: DeliveryStatus,
         attempts: int,
         response_code: int | None = None,
         response_body: str | None = None,

@@ -154,9 +154,19 @@ public final class Step {
                     && !"on_failure".equals(condition)
                     && !"always".equals(condition)) {
                 throw new IllegalArgumentException("unknown condition '" + condition
-                        + "'; use on_success, on_failure, always, or condition(Condition)");
+                        + "'; use on_success, on_failure, always, a WorkflowCondition,"
+                        + " or condition(Condition)");
             }
             this.condition = condition;
+            return this;
+        }
+
+        /**
+         * Type-safe variant of {@link #condition(String)} — run this step only when
+         * {@code condition} holds. Prefer this over the string overload.
+         */
+        public Builder condition(WorkflowCondition condition) {
+            this.condition = condition == null ? null : condition.wire();
             return this;
         }
 

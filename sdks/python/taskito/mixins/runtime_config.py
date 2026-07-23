@@ -15,7 +15,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from taskito.interception.strategy import Strategy as S
+from taskito.enums import coerce_enum
+from taskito.interception.strategy import Strategy
 
 if TYPE_CHECKING:
     from taskito.interception import ArgumentInterceptor
@@ -31,7 +32,7 @@ class QueueRuntimeConfigMixin:
     def register_type(
         self,
         python_type: type,
-        strategy: str,
+        strategy: Strategy | str,
         *,
         resource: str | None = None,
         message: str | None = None,
@@ -43,8 +44,9 @@ class QueueRuntimeConfigMixin:
 
         Args:
             python_type: The type to register.
-            strategy: One of ``"pass"``, ``"convert"``, ``"redirect"``,
-                ``"reject"``, or ``"proxy"``.
+            strategy: A :class:`~taskito.interception.strategy.Strategy` or its
+                string: ``"pass"``, ``"convert"``, ``"redirect"``, ``"reject"``,
+                or ``"proxy"``.
             resource: Resource name for ``"redirect"`` strategy.
             message: Rejection reason for ``"reject"`` strategy.
             converter: Converter callable for ``"convert"`` strategy.
@@ -56,7 +58,7 @@ class QueueRuntimeConfigMixin:
                 "Interception is disabled; set interception='strict' or "
                 "'lenient' to use register_type()"
             )
-        strat = S(strategy)
+        strat = coerce_enum(Strategy, strategy, param="strategy")
         self._interceptor._registry.register(
             python_type,
             strat,

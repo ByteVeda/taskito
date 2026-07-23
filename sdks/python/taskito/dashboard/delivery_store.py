@@ -16,7 +16,7 @@ The structure:
         "task_name": "send_email" | null,
         "job_id": "abc123" | null,
         "payload": {...},
-        "status": "delivered" | "failed" | "dead",
+        "status": "pending" | "delivered" | "failed" | "dead",
         "attempts": 3,
         "response_code": 200 | null,
         "response_body": "..." | null,
@@ -33,6 +33,7 @@ Records are inserted in chronological order; listing reverses for newest-first.
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import time
@@ -42,6 +43,27 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from taskito.app import Queue
+
+
+class DeliveryStatus(str, enum.Enum):
+    """Terminal (or pending) state of a webhook delivery attempt.
+
+    ``PENDING`` is a Python-only starting state — a record exists before its
+    first attempt settles. Other SDKs record only settled attempts.
+    """
+
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    DEAD = "dead"
+
+
+def _parse_status(value: Any) -> DeliveryStatus:
+    """Read a stored status, falling back to ``PENDING`` on an unknown value."""
+    try:
+        return DeliveryStatus(str(value))
+    except ValueError:
+        return DeliveryStatus.PENDING
 
 
 DELIVERY_PREFIX = "webhooks:deliveries:"
@@ -61,7 +83,7 @@ class DeliveryRecord:
     payload: dict[str, Any]
     task_name: str | None = None
     job_id: str | None = None
-    status: str = "pending"  # "delivered" | "failed" | "dead" | "pending"
+    status: DeliveryStatus = DeliveryStatus.PENDING
     attempts: int = 0
     response_code: int | None = None
     response_body: str | None = None
@@ -79,7 +101,7 @@ class DeliveryRecord:
             payload=dict(row.get("payload") or {}),
             task_name=row.get("task_name"),
             job_id=row.get("job_id"),
-            status=str(row.get("status", "pending")),
+            status=_parse_status(row.get("status")),
             attempts=int(row.get("attempts", 0)),
             response_code=row.get("response_code"),
             response_body=row.get("response_body"),
@@ -144,7 +166,7 @@ class DeliveryStore:
         event: str,
         payload: dict[str, Any],
         *,
-        status: str,
+        status: DeliveryStatus,
         attempts: int,
         response_code: int | None = None,
         response_body: str | None = None,
@@ -169,7 +191,7 @@ class DeliveryStore:
             latency_ms=latency_ms,
             error=error,
             created_at=now,
-            completed_at=now if status != "pending" else None,
+            completed_at=now if status is not DeliveryStatus.PENDING else None,
         )
         rows = self._load(subscription_id)
         rows.append(asdict(record))
@@ -182,7 +204,7 @@ class DeliveryStore:
         self,
         subscription_id: str,
         *,
-        status: str | None = None,
+        status: DeliveryStatus | str | None = None,
         event: str | None = None,
         limit: int = 50,
         offset: int = 0,

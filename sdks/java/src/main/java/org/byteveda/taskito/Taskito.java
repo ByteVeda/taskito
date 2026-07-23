@@ -34,6 +34,7 @@ import org.byteveda.taskito.model.Page;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
+import org.byteveda.taskito.model.StorageBackend;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskLogLevel;
@@ -656,6 +657,14 @@ public interface Taskito extends AutoCloseable {
             // Normalize at the boundary so callers may pass "SQLite"/"REDIS"; the
             // default-DSN branch and the native layer then see a canonical name.
             options.put("backend", backend == null ? null : backend.toLowerCase(Locale.ROOT));
+            return this;
+        }
+
+        /**
+         * Type-safe variant of {@link #backend(String)}. Prefer this over the string overload.
+         */
+        public Builder backend(StorageBackend backend) {
+            options.put("backend", backend == null ? null : backend.wire());
             return this;
         }
 

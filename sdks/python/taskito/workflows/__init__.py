@@ -16,6 +16,7 @@ from .types import (
     GateAction,
     NodeSnapshot,
     NodeStatus,
+    WorkflowCondition,
     WorkflowState,
     WorkflowStatus,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "NodeSnapshot",
     "NodeStatus",
     "Workflow",
+    "WorkflowCondition",
     "WorkflowContext",
     "WorkflowProxy",
     "WorkflowRun",

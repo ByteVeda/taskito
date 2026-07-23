@@ -33,6 +33,19 @@ class DiagramFormat(str, enum.Enum):
     DOT = "dot"
 
 
+class WorkflowCondition(str, enum.Enum):
+    """When a step runs, based on its predecessors' outcomes."""
+
+    ON_SUCCESS = "on_success"
+    """Every predecessor completed (the default)."""
+
+    ON_FAILURE = "on_failure"
+    """At least one predecessor failed — an error-handler branch."""
+
+    ALWAYS = "always"
+    """Regardless of predecessor outcomes, once they settle."""
+
+
 class WorkflowState(str, enum.Enum):
     """Terminal and intermediate states of a workflow run."""
 

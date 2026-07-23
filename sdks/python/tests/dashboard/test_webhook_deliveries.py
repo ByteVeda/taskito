@@ -16,7 +16,7 @@ import pytest
 from taskito import Queue
 from taskito.dashboard import _make_handler
 from taskito.dashboard._testing import AuthedClient, seed_admin_and_session
-from taskito.dashboard.delivery_store import DeliveryStore
+from taskito.dashboard.delivery_store import DeliveryStatus, DeliveryStore
 from taskito.events import EventType
 
 
@@ -100,7 +100,7 @@ def test_record_attempt_appends(queue: Queue) -> None:
         "sub1",
         event="job.completed",
         payload={"job_id": "x"},
-        status="delivered",
+        status=DeliveryStatus.DELIVERED,
         attempts=1,
         response_code=200,
         latency_ms=10,
@@ -120,7 +120,7 @@ def test_record_attempt_caps_history(queue: Queue) -> None:
             "sub1",
             event="job.completed",
             payload={"job_id": str(i)},
-            status="delivered",
+            status=DeliveryStatus.DELIVERED,
             attempts=1,
         )
     items = store.list_for("sub1")
@@ -137,7 +137,7 @@ def test_record_attempt_truncates_response_body(queue: Queue) -> None:
         "sub1",
         event="job.completed",
         payload={},
-        status="failed",
+        status=DeliveryStatus.FAILED,
         attempts=1,
         response_body=big,
     )
@@ -147,13 +147,19 @@ def test_record_attempt_truncates_response_body(queue: Queue) -> None:
 
 def test_list_for_filters_by_status_and_event(queue: Queue) -> None:
     store = DeliveryStore(queue)
-    store.record_attempt("sub1", event="job.completed", payload={}, status="delivered", attempts=1)
-    store.record_attempt("sub1", event="job.failed", payload={}, status="failed", attempts=1)
-    store.record_attempt("sub1", event="job.completed", payload={}, status="failed", attempts=1)
+    store.record_attempt(
+        "sub1", event="job.completed", payload={}, status=DeliveryStatus.DELIVERED, attempts=1
+    )
+    store.record_attempt(
+        "sub1", event="job.failed", payload={}, status=DeliveryStatus.FAILED, attempts=1
+    )
+    store.record_attempt(
+        "sub1", event="job.completed", payload={}, status=DeliveryStatus.FAILED, attempts=1
+    )
 
-    delivered = store.list_for("sub1", status="delivered")
+    delivered = store.list_for("sub1", status=DeliveryStatus.DELIVERED)
     assert len(delivered) == 1
-    failed = store.list_for("sub1", status="failed")
+    failed = store.list_for("sub1", status=DeliveryStatus.FAILED)
     assert len(failed) == 2
     completed_event = store.list_for("sub1", event="job.completed")
     assert len(completed_event) == 2
