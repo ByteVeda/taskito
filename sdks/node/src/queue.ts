@@ -86,6 +86,7 @@ import type {
   TaskOptions,
   TopicLogStat,
   TopicMessage,
+  TopicStat,
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
@@ -633,6 +634,17 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** List subscriptions — all of them, or one topic's active ones. */
   listSubscriptions(topic?: string): Promise<Subscription[]> {
     return this.native.listSubscriptions(topic);
+  }
+
+  /**
+   * Backlog snapshot per subscription, optionally filtered to one `topic`. Every
+   * registered subscription appears — paused or ephemeral ones included — even
+   * with nothing queued, so the full subscriber list comes from one call.
+   * Counts are computed live off indexed columns, so this is safe to poll.
+   */
+  async topicStats(topic?: string): Promise<TopicStat[]> {
+    const stats = await this.native.topicBacklogStats();
+    return topic === undefined ? stats : stats.filter((stat) => stat.topic === topic);
   }
 
   /**

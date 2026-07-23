@@ -24,6 +24,7 @@ export type {
   JsTaskLog as TaskLog,
   JsTopic as DeclaredTopic,
   JsTopicLogStat as TopicLogStat,
+  JsTopicStat as TopicStat,
   JsWorkerRow as WorkerInfo,
   MeshWorkerConfig,
 } from "./native";

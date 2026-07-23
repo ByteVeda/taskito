@@ -12,9 +12,9 @@ use taskito_core::Storage;
 use super::JsQueue;
 use crate::config::PublishOptions;
 use crate::convert::{
-    job_to_js, subscription_to_js, topic_log_stat_to_js, topic_message_to_js, topic_to_js, JsJob,
-    JsSubscription, JsTopic, JsTopicLogStat, JsTopicMessage, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
-    DEFAULT_TIMEOUT_MS,
+    job_to_js, subscription_to_js, topic_log_stat_to_js, topic_message_to_js, topic_stat_to_js,
+    topic_to_js, JsJob, JsSubscription, JsTopic, JsTopicLogStat, JsTopicMessage, JsTopicStat,
+    DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY, DEFAULT_TIMEOUT_MS,
 };
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
@@ -269,6 +269,20 @@ impl JsQueue {
             storage
                 .set_subscription_active(&topic, &subscription_name, active)
                 .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Backlog snapshot per registered subscription — one entry each, even at
+    /// zero backlog. Counts are aggregated live off the delivery-attribution
+    /// indexes, so they can never drift the way a maintained counter would.
+    #[napi]
+    pub async fn topic_backlog_stats(&self) -> Result<Vec<JsTopicStat>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let stats = storage.topic_backlog_stats().map_err(to_napi_err)?;
+            Ok(stats.into_iter().map(topic_stat_to_js).collect())
         })
         .await
         .map_err(join_to_napi_err)?

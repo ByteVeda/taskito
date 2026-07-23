@@ -272,3 +272,69 @@ it("reapEphemeralSubscriptions spares fresh rows even with a dead owner", async 
     new Set(["durable_task", "ephemeral_task"]),
   );
 });
+
+it("topicStats reports one backlog row per subscription", async () => {
+  const queue = newQueue();
+  queue.subscriber("orders", "send_email", () => undefined, { subscriptionName: "email" });
+  queue.subscriber("orders", "track_order", () => undefined, { subscriptionName: "analytics" });
+  await queue.declareSubscriptions();
+  await queue.publish("orders", [1]);
+  await queue.publish("orders", [2]);
+
+  const stats = new Map((await queue.topicStats("orders")).map((s) => [s.subscription, s]));
+  expect(new Set(stats.keys())).toEqual(new Set(["email", "analytics"]));
+  const email = stats.get("email");
+  expect(email?.taskName).toBe("send_email");
+  expect(email?.queue).toBe("default");
+  expect(email?.active).toBe(true);
+  expect(email?.durable).toBe(true);
+  expect(email?.pending).toBe(2);
+  expect(email?.running).toBe(0);
+  expect(email?.dead).toBe(0);
+  expect(email?.oldestPendingAgeMs).toBeGreaterThanOrEqual(0);
+  expect(stats.get("analytics")?.pending).toBe(2);
+});
+
+it("topicStats reports zeros for an idle subscription", async () => {
+  const queue = newQueue();
+  queue.subscriber("orders", "send_email", () => undefined, { subscriptionName: "email" });
+  await queue.declareSubscriptions();
+
+  const [stat] = await queue.topicStats("orders");
+  expect(stat?.pending).toBe(0);
+  expect(stat?.running).toBe(0);
+  expect(stat?.dead).toBe(0);
+  expect(stat?.oldestPendingAgeMs).toBeUndefined();
+});
+
+it("topicStats counts a failed delivery as dead", async () => {
+  const queue = newQueue();
+  queue.subscriber(
+    "orders",
+    "flaky",
+    () => {
+      throw new Error("boom");
+    },
+    { subscriptionName: "flaky", maxRetries: 0 },
+  );
+  await queue.declareSubscriptions();
+  await queue.publish("orders", [1]);
+
+  worker = queue.runWorker();
+  const deadCounted = await waitFor(async () => {
+    const [stat] = await queue.topicStats("orders");
+    return stat?.dead === 1 && stat.pending === 0;
+  });
+  expect(deadCounted).toBe(true);
+});
+
+it("topicStats filters by topic and ignores non-pubsub jobs", async () => {
+  const queue = newQueue();
+  queue.task("plain", () => undefined);
+  queue.subscriber("orders", "send_email", () => undefined, { subscriptionName: "email" });
+  await queue.declareSubscriptions();
+  queue.enqueue("plain");
+
+  expect((await queue.topicStats()).map((s) => s.subscription)).toEqual(["email"]);
+  expect(await queue.topicStats("other-topic")).toEqual([]);
+});
