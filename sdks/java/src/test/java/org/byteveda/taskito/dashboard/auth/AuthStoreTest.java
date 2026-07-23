@@ -46,11 +46,14 @@ class AuthStoreTest {
         assertThrows(DashboardError.class, () -> store.createUser("bob", "password123", Role.ADMIN));
         assertThrows(DashboardError.class, () -> store.createUser("bad name", "password123", Role.ADMIN));
         assertThrows(DashboardError.class, () -> store.createUser("carol", "short", Role.ADMIN));
-        assertThrows(DashboardError.class, () -> store.createUser("carol", "password123", null));
-        assertThrows(DashboardError.class, () -> store.createSession("carol", null));
+        assertThrows(DashboardError.class, () -> store.createUser("carol", "password123", (Role) null));
+        assertThrows(DashboardError.class, () -> store.createSession("carol", (Role) null));
         // An unknown role is no longer representable at the call site; a stored one
         // still has to fail closed.
         assertEquals(Role.VIEWER, Role.orViewer("superuser"));
+        // The wire-form overloads reject an unknown role rather than coercing it.
+        assertThrows(DashboardError.class, () -> store.createUser("carol", "password123", "root"));
+        assertThrows(DashboardError.class, () -> store.createSession("carol", "root"));
     }
 
     @Test

@@ -58,6 +58,11 @@ public final class AuthStore {
      * cross-process CAS, so a second writer in another process is still a
      * theoretical race (bounded to first-run setup, which is single-shot).
      */
+    public synchronized User createUser(String username, String password, String role) {
+        return createUser(username, password, parseRole(role));
+    }
+
+    /** Create a password user with a typed role. */
     public synchronized User createUser(String username, String password, Role role) {
         validateUsername(username);
         validatePassword(password);
@@ -201,6 +206,16 @@ public final class AuthStore {
 
     public Session createSession(String username, Role role) {
         return createSession(username, role, DEFAULT_SESSION_TTL_SECONDS);
+    }
+
+    /** Open a session from a wire-form role ({@code "admin"} / {@code "viewer"}). */
+    public Session createSession(String username, String role) {
+        return createSession(username, parseRole(role), DEFAULT_SESSION_TTL_SECONDS);
+    }
+
+    /** Open a session from a wire-form role, with an explicit TTL. */
+    public Session createSession(String username, String role, long ttlSeconds) {
+        return createSession(username, parseRole(role), ttlSeconds);
     }
 
     public Session createSession(String username, Role role, long ttlSeconds) {
@@ -371,6 +386,15 @@ public final class AuthStore {
                 throw DashboardError.badRequest("username may only contain letters, digits, '.', '_', '-'");
             }
         }
+    }
+
+    /** Strictly parse a wire-form role; anything outside the set is a request error. */
+    private static Role parseRole(String role) {
+        Role parsed = Role.fromWire(role);
+        if (parsed == null) {
+            throw DashboardError.badRequest("invalid role");
+        }
+        return parsed;
     }
 
     private static void validatePassword(String password) {
