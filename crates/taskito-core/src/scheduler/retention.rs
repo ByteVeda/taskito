@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::storage::Storage;
+use crate::storage::{RetentionCounts, RetentionCutoffs, Storage};
 
 const DAY_MS: i64 = 86_400_000;
 
@@ -99,6 +99,54 @@ impl RetentionConfig {
             job_errors_ttl_ms: keep(self.job_errors_ttl_ms),
         }
     }
+
+    /// The epoch-ms cutoffs a purge deletes below, one per table, for `now` —
+    /// exactly the `now - ttl` the cleaner hands each purge. An absent window
+    /// stays `None` (only the per-entry TTL is swept). Sanitizes first so a
+    /// negative window can never invert into a future cutoff.
+    pub fn cutoffs(&self, now: i64) -> RetentionCutoffs {
+        let sanitized = self.sanitized();
+        let cutoff = |ttl: Option<i64>| ttl.map(|t| now.saturating_sub(t));
+        RetentionCutoffs {
+            archived_jobs: cutoff(sanitized.archived_jobs_ttl_ms),
+            dead_letter: cutoff(sanitized.dead_letter_ttl_ms),
+            task_logs: cutoff(sanitized.task_logs_ttl_ms),
+            task_metrics: cutoff(sanitized.task_metrics_ttl_ms),
+            job_errors: cutoff(sanitized.job_errors_ttl_ms),
+        }
+    }
+}
+
+/// The retention windows a config actually applies. An explicit `retention`
+/// wins (an empty one disables retention); otherwise the deprecated queue-wide
+/// `result_ttl_ms` maps onto every table. With neither set, retention falls back
+/// to the recommended defaults. Negative windows are dropped on both paths.
+///
+/// Single source of truth for [`crate::scheduler::SchedulerConfig::effective_retention`]
+/// and the retention dry-run, so the preview can never diverge from the sweep.
+pub fn resolve_effective_retention(
+    retention: Option<&RetentionConfig>,
+    result_ttl_ms: Option<i64>,
+) -> RetentionConfig {
+    if let Some(retention) = retention {
+        return retention.sanitized();
+    }
+    match result_ttl_ms {
+        Some(ttl) if ttl >= 0 => RetentionConfig::uniform(ttl),
+        // A negative legacy TTL is set-but-invalid: disable rather than invert
+        // the cutoff or silently upgrade to the recommended windows.
+        Some(_) => RetentionConfig::default(),
+        None => RetentionConfig::recommended(),
+    }
+}
+
+/// True when retention runs on the recommended defaults because nothing was
+/// configured — no per-table map and no legacy `result_ttl_ms`.
+pub fn is_retention_defaulted(
+    retention: Option<&RetentionConfig>,
+    result_ttl_ms: Option<i64>,
+) -> bool {
+    retention.is_none() && result_ttl_ms.is_none()
 }
 
 /// What the elected retention leader is actually applying, as published for
@@ -172,6 +220,69 @@ pub fn read_effective_retention_json<S: Storage>(
         .transpose()
 }
 
+/// What a retention purge would delete right now, without deleting anything.
+/// Counts are a point-in-time snapshot taken at `reference_time`; a `null`
+/// window keeps its table forever and its count reflects per-entry TTLs only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetentionPreview {
+    /// False when no table has a window — only per-entry TTLs would be swept.
+    pub enabled: bool,
+    /// True when the windows are the recommended defaults, configured by no one.
+    pub defaulted: bool,
+    /// Namespace the windows cover. The purges are not queue-scoped.
+    pub namespace: String,
+    /// The `now` the snapshot was taken at, in Unix milliseconds.
+    pub reference_time: i64,
+    /// The effective windows the counts were computed against.
+    pub windows: RetentionConfig,
+    /// Rows each table's purge would remove.
+    pub counts: RetentionCounts,
+    /// Total rows across every table.
+    pub total: u64,
+}
+
+/// Count what a retention purge would delete for the given config, without
+/// deleting. Resolves the effective windows exactly as the cleaner does
+/// ([`resolve_effective_retention`]), derives the same cutoffs, and counts the
+/// matching rows in each table.
+pub fn dry_run<S: Storage>(
+    storage: &S,
+    retention: Option<&RetentionConfig>,
+    result_ttl_ms: Option<i64>,
+    namespace: Option<&str>,
+    now: i64,
+) -> Result<RetentionPreview> {
+    let windows = resolve_effective_retention(retention, result_ttl_ms);
+    let counts = storage.count_expired_rows(&windows.cutoffs(now), now)?;
+    Ok(RetentionPreview {
+        enabled: !windows.is_empty(),
+        defaulted: is_retention_defaulted(retention, result_ttl_ms),
+        namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
+        reference_time: now,
+        windows,
+        total: counts.total(),
+        counts,
+    })
+}
+
+/// [`dry_run`] serialized to the JSON document a shell forwards. See
+/// `BINDING_CONTRACT.md`.
+pub fn dry_run_json<S: Storage>(
+    storage: &S,
+    retention: Option<&RetentionConfig>,
+    result_ttl_ms: Option<i64>,
+    namespace: Option<&str>,
+    now: i64,
+) -> Result<String> {
+    Ok(serde_json::to_string(&dry_run(
+        storage,
+        retention,
+        result_ttl_ms,
+        namespace,
+        now,
+    )?)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +342,63 @@ mod tests {
         // A window that keeps its table forever must survive as an explicit
         // null — a shell reads absent and null identically.
         assert!(json.contains("\"dead_letter_ttl_ms\":null"));
+    }
+
+    #[test]
+    fn cutoffs_map_windows_and_keep_none() {
+        let cfg = RetentionConfig {
+            archived_jobs_ttl_ms: Some(1000),
+            task_logs_ttl_ms: None,
+            ..RetentionConfig::default()
+        };
+        let c = cfg.cutoffs(10_000);
+        assert_eq!(c.archived_jobs, Some(9_000), "cutoff = now - ttl");
+        assert_eq!(c.task_logs, None, "an absent window stays None");
+    }
+
+    #[test]
+    fn cutoffs_drop_a_negative_window() {
+        let cfg = RetentionConfig {
+            dead_letter_ttl_ms: Some(-5),
+            ..RetentionConfig::default()
+        };
+        assert_eq!(
+            cfg.cutoffs(10_000).dead_letter,
+            None,
+            "a negative window sanitizes to no window, never a future cutoff"
+        );
+    }
+
+    #[test]
+    fn dry_run_with_no_config_is_defaulted_and_enabled() {
+        let storage = crate::storage::sqlite::SqliteStorage::in_memory().unwrap();
+        let preview = dry_run(&storage, None, None, None, 1_753_200_000_000).unwrap();
+        assert!(preview.enabled, "recommended defaults enable retention");
+        assert!(preview.defaulted, "nothing configured → defaulted");
+        assert_eq!(preview.namespace, DEFAULT_NAMESPACE);
+        assert_eq!(preview.reference_time, 1_753_200_000_000);
+        assert!(preview.windows.archived_jobs_ttl_ms.is_some());
+        assert_eq!(preview.total, 0, "an empty store has nothing to purge");
+    }
+
+    #[test]
+    fn dry_run_with_empty_config_is_disabled_not_defaulted() {
+        let storage = crate::storage::sqlite::SqliteStorage::in_memory().unwrap();
+        let preview = dry_run(
+            &storage,
+            Some(&RetentionConfig::default()),
+            None,
+            None,
+            1_753_200_000_000,
+        )
+        .unwrap();
+        assert!(
+            !preview.enabled,
+            "an explicit empty config disables the windows"
+        );
+        assert!(
+            !preview.defaulted,
+            "an explicit config is the operator's own choice"
+        );
     }
 }

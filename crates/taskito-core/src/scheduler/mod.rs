@@ -91,17 +91,7 @@ impl SchedulerConfig {
     /// invert the cutoff into the future and match every row; the bindings
     /// reject them, this is defense in depth for a directly-constructed config).
     pub fn effective_retention(&self) -> retention::RetentionConfig {
-        if let Some(retention) = &self.retention {
-            return retention.sanitized();
-        }
-        match self.result_ttl_ms {
-            Some(ttl) if ttl >= 0 => retention::RetentionConfig::uniform(ttl),
-            // A negative legacy TTL is a set-but-invalid choice: refuse to be
-            // destructive on it (disable), rather than inverting the cutoff or
-            // silently upgrading it to the recommended windows.
-            Some(_) => retention::RetentionConfig::default(),
-            None => retention::RetentionConfig::recommended(),
-        }
+        retention::resolve_effective_retention(self.retention.as_ref(), self.result_ttl_ms)
     }
 
     /// True when retention runs on the recommended defaults because nothing was
@@ -109,7 +99,7 @@ impl SchedulerConfig {
     /// one-time cleanup announcement fires only in this case: an explicit, legacy,
     /// or set-but-invalid config is the operator's own doing and needs no warning.
     pub fn retention_is_defaulted(&self) -> bool {
-        self.retention.is_none() && self.result_ttl_ms.is_none()
+        retention::is_retention_defaulted(self.retention.as_ref(), self.result_ttl_ms)
     }
 }
 
