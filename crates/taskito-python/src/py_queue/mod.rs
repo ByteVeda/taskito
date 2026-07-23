@@ -680,6 +680,36 @@ impl PyQueue {
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Count what a retention purge would delete right now, without deleting
+    /// anything. Returns the preview as a JSON document. See
+    /// ``BINDING_CONTRACT.md``.
+    ///
+    /// With no `retention` argument the preview uses this queue's configured (or
+    /// default-recommended) windows. Passing candidate windows previews those
+    /// instead — so an operator can size a window before setting it, without
+    /// reconfiguring a worker. An explicit empty map previews a disabled policy.
+    #[pyo3(signature = (retention=None))]
+    pub fn dry_run_retention(
+        &self,
+        retention: Option<std::collections::HashMap<String, i64>>,
+    ) -> PyResult<String> {
+        // Candidate windows override the queue's own config and the legacy TTL,
+        // so the preview reflects exactly what was asked about; `None` falls back
+        // to what a worker would actually apply for this queue.
+        let (config, result_ttl_ms) = match retention {
+            Some(map) => (build_retention_config(Some(map))?, None),
+            None => (self.retention.clone(), self.result_ttl_ms),
+        };
+        taskito_core::scheduler::retention::dry_run_json(
+            &self.storage,
+            config.as_ref(),
+            result_ttl_ms,
+            self.namespace.as_deref(),
+            taskito_core::job::now_millis(),
+        )
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Return all dashboard settings as a ``{key: value}`` dict.
     pub fn list_settings(&self) -> PyResult<std::collections::HashMap<String, String>> {
         self.storage

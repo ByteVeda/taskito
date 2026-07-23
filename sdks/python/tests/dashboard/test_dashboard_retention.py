@@ -171,6 +171,29 @@ def test_retention_endpoint_echoes_the_published_windows(
         assert body["windows"]["dead_letter_ttl_ms"] == 30 * DAY_MS
 
 
+def test_retention_dry_run_endpoint_reports_counts(
+    dashboard_server: tuple[AuthedClient, Queue],
+) -> None:
+    # The dry-run is computed in-process, so it answers immediately — no worker
+    # sweep needed. On an empty queue every count is zero, but the defaults are
+    # still reported as on.
+    client, _ = dashboard_server
+    body = client.get("/api/retention/dry-run")
+    assert body["enabled"] is True
+    assert body["defaulted"] is True
+    assert body["namespace"] == "default"
+    assert body["reference_time"] > 0
+    assert body["total"] == 0
+    assert body["counts"] == {
+        "task_logs": 0,
+        "archived_jobs": 0,
+        "job_errors": 0,
+        "task_metrics": 0,
+        "dead_letter": 0,
+    }
+    assert body["windows"]["task_logs_ttl_ms"] == 3 * DAY_MS
+
+
 # ── Reserved settings namespace ─────────────────────────
 
 

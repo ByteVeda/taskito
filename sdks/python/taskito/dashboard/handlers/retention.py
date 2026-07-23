@@ -35,3 +35,19 @@ def _handle_retention(queue: Queue, _qs: dict) -> dict[str, Any]:
         "reported_at": snapshot.reported_at if snapshot else None,
         "windows": _windows(snapshot),
     }
+
+
+def _handle_retention_dry_run(queue: Queue, _qs: dict) -> dict[str, Any]:
+    """Preview what a purge would delete under this queue's windows, without
+    deleting. Computed in-process against the live data, so it always returns a
+    document (never the unreported state ``/api/retention`` can report)."""
+    preview = queue.dry_run_retention()
+    return {
+        "enabled": preview.enabled,
+        "defaulted": preview.defaulted,
+        "namespace": preview.namespace,
+        "reference_time": preview.reference_time,
+        "windows": {f"{table}_ttl_ms": preview.windows.get(table) for table in RETENTION_TABLES},
+        "counts": {table: preview.counts.get(table, 0) for table in RETENTION_TABLES},
+        "total": preview.total,
+    }

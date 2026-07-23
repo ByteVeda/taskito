@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from taskito.mixins.periodic import PeriodicInfo
     from taskito.pagination import Page
     from taskito.result import JobResult
-    from taskito.retention import EffectiveRetention
+    from taskito.retention import EffectiveRetention, Retention, RetentionPreview
 
 logger = logging.getLogger("taskito")
 
@@ -131,6 +131,7 @@ class AsyncQueueMixin:
         def resume(self, queue_name: str = ...) -> None: ...
         def paused_queues(self) -> list[str]: ...
         def effective_retention(self) -> EffectiveRetention | None: ...
+        def dry_run_retention(self, retention: Retention | None = ...) -> RetentionPreview: ...
         def list_periodic(self) -> list[PeriodicInfo]: ...
         def delete_periodic(self, name: str) -> bool: ...
         def pause_periodic(self, name: str) -> bool: ...
@@ -301,6 +302,10 @@ class AsyncQueueMixin:
     async def aeffective_retention(self) -> EffectiveRetention | None:
         """Async version of :meth:`effective_retention`."""
         return await self._run_sync(self.effective_retention)
+
+    async def adry_run_retention(self, retention: Retention | None = None) -> RetentionPreview:
+        """Async version of :meth:`dry_run_retention`."""
+        return await self._run_sync(self.dry_run_retention, retention)
 
     # -- Periodic --
 

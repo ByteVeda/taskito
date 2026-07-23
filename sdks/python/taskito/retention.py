@@ -99,3 +99,46 @@ class EffectiveRetention:
             reported_at=int(doc.get("reported_at", 0)),
             windows={table: published.get(f"{table}_ttl_ms") for table in RETENTION_TABLES},
         )
+
+
+@dataclass(frozen=True)
+class RetentionPreview:
+    """What a retention purge would delete right now, without deleting anything.
+
+    Returned by :meth:`~taskito.Queue.dry_run_retention` so operators can size a
+    window before committing to it. Counts are a point-in-time snapshot taken at
+    :attr:`reference_time` and computed against the queue's configured (or
+    default-recommended) windows. Windows are **milliseconds**; a ``None`` window
+    keeps that table forever and its count reflects per-entry ``result_ttl`` only.
+    """
+
+    enabled: bool
+    """False when no table has a window — only per-entry TTLs would be swept."""
+    defaulted: bool
+    """True when the windows are the recommended defaults, set by no one."""
+    namespace: str
+    """Namespace the windows cover. The purges are not queue-scoped."""
+    reference_time: int
+    """The ``now`` the snapshot was taken at, in Unix milliseconds."""
+    windows: dict[str, int | None]
+    """``{table: window_ms}`` for every table in :data:`RETENTION_TABLES`."""
+    counts: dict[str, int]
+    """``{table: rows_that_would_be_purged}`` for every table."""
+    total: int
+    """Total rows a purge would delete across every table."""
+
+    @classmethod
+    def _from_json(cls, raw: str) -> RetentionPreview:
+        """Parse the document the core produces. See ``BINDING_CONTRACT.md``."""
+        doc: dict[str, Any] = json.loads(raw)
+        windows: dict[str, Any] = doc.get("windows") or {}
+        counts: dict[str, Any] = doc.get("counts") or {}
+        return cls(
+            enabled=bool(doc.get("enabled", False)),
+            defaulted=bool(doc.get("defaulted", False)),
+            namespace=str(doc.get("namespace", "default")),
+            reference_time=int(doc.get("reference_time", 0)),
+            windows={table: windows.get(f"{table}_ttl_ms") for table in RETENTION_TABLES},
+            counts={table: int(counts.get(table, 0)) for table in RETENTION_TABLES},
+            total=int(doc.get("total", 0)),
+        )
