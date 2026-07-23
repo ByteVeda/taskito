@@ -366,13 +366,16 @@ for schedule in queue.list_periodic():
 Every method also has an `a`-prefixed async form — `alist_periodic`,
 `apause_periodic`, `aresume_periodic`, `adelete_periodic`.
 
-These act on the catalog in storage, which is written when
-<SdkLink to="guides/core/workers">`run_worker()`</SdkLink> starts — a producer
-process that never starts a worker sees an empty list. `@queue.periodic()` only
-*declares* a schedule, so removing the decorator does **not** delete its row:
-the schedule keeps firing and enqueuing jobs for a task name no running worker
-handles anymore. Retire one with `delete_periodic()` rather than by deleting
-the decorator.
+These act on the catalog in storage, so any process pointed at the same backend
+can read and manage it — including a producer that never starts a worker. What
+such a process won't see are the schedules *it* declares: `@queue.periodic()`
+only declares one, and writing it to storage is something
+<SdkLink to="guides/core/workers">`run_worker()`</SdkLink> does at startup.
+
+For the same reason, removing a `@queue.periodic()` decorator does **not**
+delete its row: the schedule keeps firing and enqueuing jobs for a task name no
+running worker handles anymore. Retire one with `delete_periodic()` rather than
+by deleting the decorator.
 
 </SdkOnly>
 
