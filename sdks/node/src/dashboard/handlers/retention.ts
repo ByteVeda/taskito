@@ -32,3 +32,30 @@ export function retention(queue: Queue) {
     windows: windowsToContract(snapshot),
   };
 }
+
+/** Preview what a purge would delete under this queue's default windows,
+ *  computed in-process, so it always answers (never the unreported state). */
+export function retentionDryRun(queue: Queue) {
+  const preview = queue.dryRunRetention();
+  return {
+    enabled: preview.enabled,
+    defaulted: preview.defaulted,
+    namespace: preview.namespace,
+    reference_time: preview.referenceTime,
+    windows: {
+      task_logs_ttl_ms: preview.windows.taskLogs,
+      archived_jobs_ttl_ms: preview.windows.archivedJobs,
+      job_errors_ttl_ms: preview.windows.jobErrors,
+      task_metrics_ttl_ms: preview.windows.taskMetrics,
+      dead_letter_ttl_ms: preview.windows.deadLetter,
+    },
+    counts: {
+      task_logs: preview.counts.taskLogs,
+      archived_jobs: preview.counts.archivedJobs,
+      job_errors: preview.counts.jobErrors,
+      task_metrics: preview.counts.taskMetrics,
+      dead_letter: preview.counts.deadLetter,
+    },
+    total: preview.total,
+  };
+}

@@ -42,7 +42,7 @@ import {
   ResourceRuntime,
   type ResourceScope,
 } from "./resources";
-import { parseEffectiveRetention } from "./retention";
+import { parseEffectiveRetention, parseRetentionPreview } from "./retention";
 import {
   CodecSerializer,
   deserializeCall,
@@ -75,6 +75,8 @@ import type {
   RegisteredTask,
   ReplayEntry,
   ResultOptions,
+  RetentionOptions,
+  RetentionPreview,
   Stats,
   StreamOptions,
   SubscriberOptions,
@@ -1241,6 +1243,17 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   effectiveRetention(): EffectiveRetention | null {
     const raw = this.native.effectiveRetention();
     return raw === null ? null : parseEffectiveRetention(raw);
+  }
+
+  /**
+   * Preview what a retention purge would delete right now, without deleting
+   * anything. With no argument the preview uses the recommended default
+   * windows; pass candidate `retention` windows to size a window before setting
+   * it — no worker reconfiguration needed. The counts are a point-in-time
+   * snapshot; nothing is deleted.
+   */
+  dryRunRetention(retention?: RetentionOptions): RetentionPreview {
+    return parseRetentionPreview(this.native.dryRunRetention(retention));
   }
 
   // ── Task & queue overrides (dashboard-tunable runtime config) ─────

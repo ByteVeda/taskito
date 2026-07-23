@@ -103,6 +103,7 @@ export type {
   RateLimit,
   ResultOptions,
   RetentionOptions,
+  RetentionPreview,
   Stats,
   StreamOptions,
   SubscriberOptions,

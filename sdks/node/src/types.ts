@@ -375,3 +375,38 @@ export interface EffectiveRetention {
     jobErrors: number | null;
   };
 }
+
+/**
+ * What a retention purge would delete right now, without deleting anything.
+ * Counts are a point-in-time snapshot taken at `referenceTime`, computed
+ * against the previewed windows. Windows are **milliseconds**; `null` keeps a
+ * table forever and its count reflects per-entry TTLs only.
+ */
+export interface RetentionPreview {
+  /** False when no table has a window — only per-entry TTLs would be swept. */
+  enabled: boolean;
+  /** True when the windows are the recommended defaults, set by no one. */
+  defaulted: boolean;
+  /** Namespace the windows cover. The purges are not queue-scoped. */
+  namespace: string;
+  /** The `now` the snapshot was taken at, in Unix milliseconds. */
+  referenceTime: number;
+  /** Per-table windows in milliseconds; `null` keeps a table forever. */
+  windows: {
+    archivedJobs: number | null;
+    deadLetter: number | null;
+    taskLogs: number | null;
+    taskMetrics: number | null;
+    jobErrors: number | null;
+  };
+  /** Rows each table's purge would remove. */
+  counts: {
+    archivedJobs: number;
+    deadLetter: number;
+    taskLogs: number;
+    taskMetrics: number;
+    jobErrors: number;
+  };
+  /** Total rows a purge would delete across every table. */
+  total: number;
+}

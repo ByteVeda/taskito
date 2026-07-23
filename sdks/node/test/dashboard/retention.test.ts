@@ -136,3 +136,60 @@ describe("retention api", () => {
     expect(spoof.status).toBe(400);
   });
 });
+
+describe("dryRunRetention", () => {
+  it("previews the default windows on an empty queue", () => {
+    // Computed in-process, so it answers without a worker sweep. Empty queue →
+    // every count is zero, but the defaults are still reported as on.
+    const preview = queue.dryRunRetention();
+
+    expect(preview.enabled).toBe(true);
+    expect(preview.defaulted).toBe(true);
+    expect(preview.namespace).toBe("default");
+    expect(preview.referenceTime).toBeGreaterThan(0);
+    expect(preview.total).toBe(0);
+    expect(preview.counts).toEqual({
+      archivedJobs: 0,
+      deadLetter: 0,
+      taskLogs: 0,
+      taskMetrics: 0,
+      jobErrors: 0,
+    });
+  });
+
+  it("previews candidate windows without configuring a worker", () => {
+    const preview = queue.dryRunRetention({ archivedJobs: 0 });
+
+    expect(preview.enabled).toBe(true);
+    expect(preview.defaulted).toBe(false);
+    expect(preview.windows.archivedJobs).toBe(0);
+    // Unset candidate windows keep forever.
+    expect(preview.windows.deadLetter).toBeNull();
+  });
+});
+
+describe("retention dry-run api", () => {
+  it("reports counts computed in-process", async () => {
+    const body = await get("/api/retention/dry-run");
+
+    expect(body.enabled).toBe(true);
+    expect(body.defaulted).toBe(true);
+    expect(body.namespace).toBe("default");
+    expect(body.total).toBe(0);
+    expect(body.counts).toEqual({
+      task_logs: 0,
+      archived_jobs: 0,
+      job_errors: 0,
+      task_metrics: 0,
+      dead_letter: 0,
+    });
+    // The default recommended windows the preview computed against.
+    expect(body.windows).toEqual({
+      task_logs_ttl_ms: 3 * DAY_MS,
+      archived_jobs_ttl_ms: 7 * DAY_MS,
+      job_errors_ttl_ms: 7 * DAY_MS,
+      task_metrics_ttl_ms: 7 * DAY_MS,
+      dead_letter_ttl_ms: 30 * DAY_MS,
+    });
+  });
+});

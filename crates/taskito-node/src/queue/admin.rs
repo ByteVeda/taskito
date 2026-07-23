@@ -10,6 +10,7 @@ use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::JsQueue;
+use crate::config::RetentionInput;
 use crate::convert::{dead_job_to_js, JsDeadJob, JsDeadJobPage};
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
@@ -236,6 +237,27 @@ impl JsQueue {
         taskito_core::scheduler::retention::read_effective_retention_json(
             &self.storage,
             self.namespace.as_deref(),
+        )
+        .map_err(to_napi_err)
+    }
+
+    /// Count what a retention purge would delete right now, without deleting
+    /// anything. Returns the preview as a JSON document. See
+    /// `BINDING_CONTRACT.md`.
+    ///
+    /// With no `retention` argument the preview uses the recommended default
+    /// windows; pass candidate windows to size a window before setting it —
+    /// without reconfiguring a worker. An all-unset input previews a disabled
+    /// policy.
+    #[napi]
+    pub fn dry_run_retention(&self, retention: Option<RetentionInput>) -> Result<String> {
+        let config = retention.map(|r| r.to_config());
+        taskito_core::scheduler::retention::dry_run_json(
+            &self.storage,
+            config.as_ref(),
+            None,
+            self.namespace.as_deref(),
+            now_millis(),
         )
         .map_err(to_napi_err)
     }
