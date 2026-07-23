@@ -174,11 +174,21 @@ impl WorkerStatus {
     }
 
     /// Parse a persisted `status`; anything unrecognized reads as active, the
-    /// value every backend writes at registration.
+    /// value every backend writes at registration. Use [`Self::parse`] for caller
+    /// input, where a typo must not pass silently.
     pub fn from_wire(wire: &str) -> Self {
         match wire {
             "draining" => WorkerStatus::Draining,
             _ => WorkerStatus::Active,
+        }
+    }
+
+    /// Strictly parse caller-supplied input; `None` for anything outside the set.
+    pub fn parse(wire: &str) -> Option<Self> {
+        match wire {
+            "active" => Some(WorkerStatus::Active),
+            "draining" => Some(WorkerStatus::Draining),
+            _ => None,
         }
     }
 }

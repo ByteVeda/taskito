@@ -834,11 +834,16 @@ impl PyQueue {
         ))
     }
 
-    /// Update the status of a worker. An unrecognized status reads as active,
-    /// matching what every backend writes at registration.
+    /// Update the status of a worker. An unrecognized status is a caller error —
+    /// coercing it would silently un-drain a worker.
     pub fn set_worker_status(&self, worker_id: &str, status: &str) -> PyResult<()> {
+        let parsed = WorkerStatus::parse(status).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown worker status '{status}' (expected 'active' or 'draining')"
+            ))
+        })?;
         self.storage
-            .update_worker_status(worker_id, WorkerStatus::from_wire(status))
+            .update_worker_status(worker_id, parsed)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 }
