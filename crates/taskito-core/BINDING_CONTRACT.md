@@ -236,9 +236,8 @@ what it applies to the settings KV on every cleanup sweep, and every shell's
 dashboard echoes that document instead of guessing at the defaults.
 
 - **Key** `retention:effective:<namespace>` (unnamespaced queues use `default`).
-  The `retention:` prefix is **reserved**: a shell's settings API must treat it
-  the way it treats `auth:` — never listed, written, or deleted through the
-  generic KV endpoints, so the published policy cannot be spoofed.
+  The `retention:` prefix is **reserved** (see below), so the published policy
+  cannot be spoofed through a dashboard's generic KV endpoints.
 - **Document** (snake_case; windows in **milliseconds**, `null` = keep forever):
   `enabled`, `defaulted`, `namespace`, `reported_at` (Unix ms), and `windows` with
   `archived_jobs_ttl_ms`, `dead_letter_ttl_ms`, `task_logs_ttl_ms`,
@@ -250,6 +249,19 @@ dashboard echoes that document instead of guessing at the defaults.
   surfaces that state distinctly; `enabled: false` is what "off" looks like.
 - Shells read it through `scheduler::retention::read_effective_retention_json`
   rather than parsing the key themselves.
+
+## Reserved settings prefixes (cross-SDK)
+The settings KV also backs auth state, webhook subscriptions, and the retention
+document above. None of it belongs on the dashboard's generic key/value surface:
+reads leak credentials, writes spoof a published policy.
+
+- `settings::RESERVED_SETTING_PREFIXES` is the canonical list, exported by every
+  binding (`reserved_setting_prefixes()` / `NativeQueue.reservedSettingPrefixes()`).
+  A shell's settings API MUST derive its hide list from it rather than
+  hardcoding one — a prefix missed in one shell reopens the hole for all of them.
+- A key under a reserved prefix is **absent** to that API: never listed, read,
+  written, or deleted through it. The runtime's own readers and writers use the
+  `Storage` settings methods, which stay unrestricted.
 
 ## Types the shell produces / consumes
 - **`Job`** — `job.rs`. Fields incl. `id`, `queue`, `task_name`, `payload: Vec<u8>` (opaque),

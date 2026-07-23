@@ -573,3 +573,7 @@ class PyResultSender:
 def _init_rust_logging() -> None:
     """Activate the Rust → Python `logging` bridge (idempotent)."""
     ...
+
+def reserved_setting_prefixes() -> list[str]:
+    """Settings-key prefixes the dashboard's generic KV surface must hide."""
+    ...

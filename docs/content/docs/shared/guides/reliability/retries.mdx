@@ -269,6 +269,35 @@ It sees every exception raised while running the task, not only the handler's:
 too, and a whitelist like the first example above dead-letters those as well. A
 timeout is detected outside the handler and always retries.
 
+### Typed signals from the handler
+
+A predicate classifies a task's failures by type up front. When only the
+handler knows — the same `IOException` is transient on a 503 and permanent on
+a 422 — throw the intent instead:
+
+```java
+queue.worker().handle(CHARGE, (Order order) -> {
+    Response response = gateway.charge(order);
+    if (response.status() == 402) {
+        throw new NonRetryableException("card declined");  // dead-letters now
+    }
+    if (response.status() >= 500) {
+        throw new RetryableException("gateway " + response.status());  // spends the budget
+    }
+    return response.body();
+});
+```
+
+| Exception | Effect |
+|---|---|
+| `NonRetryableException` | Dead-letters the job at once, whatever budget is left. |
+| `RetryableException` | Retries on the task's backoff curve until the budget is spent. |
+
+Both live in `org.byteveda.taskito.errors` and both beat `retryOn` — the throw
+site is more specific than the task-wide predicate, so it wins. They are
+honoured through the cause chain too, so a signal wrapped by framework code
+still counts; if a chain carries both, the outermost wins.
+
 </SdkOnly>
 
 ## Per-job overrides
@@ -338,9 +367,10 @@ retry-budget check.
 
 <SdkOnly sdk="java">
 
-The "Exception passes filter?" step only applies filtering when `retryOn` is
-set on the task — otherwise every exception passes straight through to the
-retry-budget check.
+The "Exception passes filter?" step is answered by `RetryableException` /
+`NonRetryableException` when the handler threw one; otherwise it applies
+`retryOn`, and with no predicate every exception passes straight through to
+the retry-budget check.
 
 </SdkOnly>
 

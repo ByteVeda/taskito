@@ -8,6 +8,8 @@ import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.errors.ConfigurationException;
 import org.byteveda.taskito.errors.CryptoException;
 import org.byteveda.taskito.errors.LockException;
+import org.byteveda.taskito.errors.NonRetryableException;
+import org.byteveda.taskito.errors.RetryableException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WebhookException;
 import org.byteveda.taskito.errors.WorkflowException;
@@ -25,6 +27,8 @@ class ExceptionHierarchyTest {
         assertTrue(TaskitoException.class.isAssignableFrom(LockException.class));
         assertTrue(TaskitoException.class.isAssignableFrom(ConfigurationException.class));
         assertTrue(TaskitoException.class.isAssignableFrom(WebhookException.class));
+        assertTrue(TaskitoException.class.isAssignableFrom(RetryableException.class));
+        assertTrue(TaskitoException.class.isAssignableFrom(NonRetryableException.class));
         // CryptoException is a kind of SerializationException.
         assertTrue(SerializationException.class.isAssignableFrom(CryptoException.class));
     }

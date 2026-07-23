@@ -118,28 +118,11 @@ final class WorkerDispatchBridge implements WorkerBridge {
                 m.onError(context, t);
             }
             // Canonical structured error (middleware above saw the live Throwable).
-            bound.failJob(token, TaskErrors.encode(t), isRetryable(task, t));
+            bound.failJob(token, TaskErrors.encode(t), RetryDecision.isRetryable(task.retryOn, t));
         } finally {
             if (scope != null) {
                 Resources.exit(scope); // unbind the thread + dispose task-scoped resources (LIFO)
             }
-        }
-    }
-
-    /**
-     * Ask a task's {@code retryOn} predicate whether {@code error} is worth retrying.
-     * No predicate means retry, and so does one that throws — a broken classifier must
-     * not silently turn transient failures into dead letters.
-     */
-    private static boolean isRetryable(RegisteredTask task, Throwable error) {
-        if (task.retryOn == null) {
-            return true;
-        }
-        try {
-            return task.retryOn.test(error);
-        } catch (RuntimeException e) {
-            LOG.warn("retryOn predicate threw; retrying the failure", e);
-            return true;
         }
     }
 

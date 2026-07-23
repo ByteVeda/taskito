@@ -86,6 +86,11 @@ describe("settings api", () => {
     expect(
       (await fetch(`${base}/api/settings/auth:users`, { method: "DELETE", headers })).status,
     ).toBe(404);
+
+    // The published retention document is a report, not an editable row.
+    expect((await put("/api/settings/retention:effective:default", { value: "{}" })).status).toBe(
+      400,
+    );
   });
 
   it("deletes settings and 404s unknown keys", async () => {

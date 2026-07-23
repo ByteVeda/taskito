@@ -99,6 +99,9 @@ public final class NativeQueue {
 
     public static native String listSettings(long handle);
 
+    /** Settings-key prefixes the dashboard's generic KV surface must hide. */
+    public static native String[] reservedSettingPrefixes();
+
     /** The published retention windows as JSON, or {@code null} if unreported. */
     public static native String effectiveRetention(long handle);
 

@@ -157,6 +157,21 @@ def test_get_settings_hides_webhook_keys(dashboard_server: tuple[AuthedClient, Q
     assert exc_info.value.code == 404
 
 
+def test_settings_api_hides_published_retention(
+    dashboard_server: tuple[AuthedClient, Queue],
+) -> None:
+    """``retention:`` is a report of what the cleaner applies, not an editable row."""
+    client, queue = dashboard_server
+    queue.set_setting("retention:effective:default", json.dumps({"enabled": True}))
+
+    snapshot = client.get("/api/settings")
+    assert not any(k.startswith("retention:") for k in snapshot)
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        client.put("/api/settings/retention:effective:default", {"value": "{}"})
+    assert exc_info.value.code == 400
+
+
 def test_put_setting_with_missing_value_field_returns_400(
     dashboard_server: tuple[AuthedClient, Queue],
 ) -> None:

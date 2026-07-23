@@ -1,6 +1,7 @@
 package org.byteveda.taskito.dashboard;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
@@ -27,5 +28,14 @@ public final class InMemorySettings implements SettingsAccess {
     @Override
     public Map<String, String> listSettings() {
         return new HashMap<>(map);
+    }
+
+    /**
+     * Mirrors the core list so unit tests need no native library.
+     * {@code ReservedSettingPrefixesTest} fails if the two drift.
+     */
+    @Override
+    public List<String> reservedPrefixes() {
+        return List.of("auth:", "retention:", "taskito.webhooks", "webhook:", "webhooks:");
     }
 }

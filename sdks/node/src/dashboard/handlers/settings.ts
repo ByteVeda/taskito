@@ -3,6 +3,7 @@
 // integrations, external links).
 
 import type { Queue } from "../../index";
+import { reservedSettingPrefixes } from "../../native";
 import { BadRequestError, NotFoundError } from "../errors";
 
 const MAX_KEY_LENGTH = 256;
@@ -14,7 +15,8 @@ const MAX_VALUE_LENGTH = 64 * 1024; // 64 KiB — enough for any dashboard confi
 // keys hold subscription rows with plaintext HMAC secrets plus delivery
 // logs. `retention:` holds the windows the cleaner publishes — a report of
 // what the worker does, not a knob. Protected keys are treated as absent.
-const PROTECTED_PREFIXES = ["auth:", "webhooks:", "webhook:", "retention:"];
+// The list comes from the core so every shell hides the same keys.
+const PROTECTED_PREFIXES = reservedSettingPrefixes();
 
 const isProtected = (key: string): boolean => PROTECTED_PREFIXES.some((p) => key.startsWith(p));
 

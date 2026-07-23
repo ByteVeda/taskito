@@ -1,7 +1,7 @@
 //! Mutating administration entry points for `NativeQueue`.
 
 use jni::objects::{JClass, JString};
-use jni::sys::{jboolean, jlong, jstring, JNI_FALSE};
+use jni::sys::{jboolean, jlong, jobjectArray, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
@@ -9,7 +9,7 @@ use taskito_core::Storage;
 use super::borrow_queue;
 use crate::convert::{to_json, DeadJobView, ReplayEntryView};
 use crate::error::BindingError;
-use crate::ffi::{guard, new_string, read_string};
+use crate::ffi::{guard, new_string, new_string_array, read_string};
 
 /// `String listDead(long handle, long limit, long offset)` — dead-letter entries.
 #[no_mangle]
@@ -165,6 +165,25 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listPaused
     guard(&mut env, std::ptr::null_mut(), |env| {
         let queue = unsafe { borrow_queue(handle) };
         new_string(env, to_json(&queue.storage.list_paused_queues()?)?)
+    })
+}
+
+/// `String[] reservedSettingPrefixes()` — settings-key prefixes a dashboard's
+/// generic KV surface must hide. Sourced from the core so every shell hides the
+/// same keys.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_reservedSettingPrefixes<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jobjectArray {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let prefixes: Vec<String> = taskito_core::RESERVED_SETTING_PREFIXES
+            .iter()
+            .map(|prefix| (*prefix).to_string())
+            .collect();
+        new_string_array(env, &prefixes)
     })
 }
 

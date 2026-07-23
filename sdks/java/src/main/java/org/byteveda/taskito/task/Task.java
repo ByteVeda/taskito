@@ -133,6 +133,10 @@ public final class Task<T> {
      * payload decoding and result serialization can fail too, so a whitelist
      * predicate dead-letters those as well. A timeout is detected outside the
      * handler and always consumes a retry.
+     *
+     * <p>A handler that throws {@link org.byteveda.taskito.errors.RetryableException}
+     * or {@link org.byteveda.taskito.errors.NonRetryableException} decides for itself
+     * — those bypass this predicate.
      */
     public Task<T> retryOn(Predicate<Throwable> retryOn) {
         return new Task<>(

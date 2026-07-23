@@ -37,14 +37,19 @@ class SettingsHandlersTest {
     void protectedKeysAreInvisible() {
         settings.setSetting("auth:users", "{}");
         settings.setSetting("webhooks:subscriptions", "[]");
+        settings.setSetting("retention:effective:default", "{}");
         handlers.put("visible", Map.of("value", "1"));
         Map<String, Object> listed = asMap(handlers.list());
         assertTrue(listed.containsKey("visible"));
         assertTrue(!listed.containsKey("auth:users"));
         assertTrue(!listed.containsKey("webhooks:subscriptions"));
+        // The published retention document is a report, not an editable row.
+        assertTrue(!listed.containsKey("retention:effective:default"));
         assertNull(handlers.get("auth:users"));
+        assertNull(handlers.get("retention:effective:default"));
         assertThrows(DashboardError.class, () -> handlers.put("auth:x", Map.of("value", "1")));
         assertThrows(DashboardError.class, () -> handlers.delete("webhooks:subscriptions"));
+        assertThrows(DashboardError.class, () -> handlers.put("retention:effective:default", Map.of("value", "{}")));
     }
 
     @Test

@@ -8,24 +8,25 @@ import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.byteveda.taskito.dashboard.support.Json;
 
 /**
- * Generic settings KV API. Keys under the reserved prefixes ({@code auth:},
- * {@code webhooks:}, {@code retention:}) are treated as absent everywhere — never listed, read,
- * written, or deleted through this surface — so auth and webhook state cannot be
- * exposed or clobbered. Keys are capped at 256 chars, values at 64 KiB.
+ * Generic settings KV API. Keys under the core's reserved prefixes ({@code auth:},
+ * {@code webhooks:}, {@code retention:}, …) are treated as absent everywhere — never
+ * listed, read, written, or deleted through this surface — so auth state, webhooks, and
+ * published runtime documents cannot be exposed or clobbered. Keys are capped at 256
+ * chars, values at 64 KiB.
  */
 public final class SettingsHandlers {
     static final int MAX_KEY_LENGTH = 256;
     static final int MAX_VALUE_LENGTH = 64 * 1024;
-    // Hide auth state, the webhook store (persisted under the "taskito.webhooks"
-    // key), and the retention windows the cleaner publishes — a report of what
-    // the worker does, not a knob.
-    private static final List<String> PROTECTED_PREFIXES =
-            List.of("auth:", "webhooks:", "taskito.webhooks", "retention:");
 
     private final SettingsAccess settings;
+    // Auth state, the webhook store, and the retention windows the cleaner
+    // publishes. The store hands over the core's list, so every shell hides the
+    // same keys and this class never touches the native library itself.
+    private final List<String> protectedPrefixes;
 
     public SettingsHandlers(SettingsAccess settings) {
         this.settings = settings;
+        this.protectedPrefixes = settings.reservedPrefixes();
     }
 
     public Object list() {
@@ -70,11 +71,11 @@ public final class SettingsHandlers {
         return m;
     }
 
-    private static boolean isProtected(String key) {
-        return PROTECTED_PREFIXES.stream().anyMatch(key::startsWith);
+    private boolean isProtected(String key) {
+        return protectedPrefixes.stream().anyMatch(key::startsWith);
     }
 
-    private static void validateKey(String key) {
+    private void validateKey(String key) {
         if (key == null || key.isEmpty() || key.length() > MAX_KEY_LENGTH) {
             throw DashboardError.badRequest("invalid setting key");
         }

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from taskito._taskito import reserved_setting_prefixes
 from taskito.dashboard.errors import _BadRequest, _NotFound
 
 if TYPE_CHECKING:
@@ -30,8 +31,9 @@ _MAX_VALUE_LENGTH = 64 * 1024  # 64 KiB — enough for any realistic dashboard c
 # these must stay out of the generic settings endpoints too. ``retention:``
 # holds the windows the cleaner publishes — a report of what the worker does,
 # not a knob, and writable only by the cleaner itself. The settings handlers
-# treat every protected key as if absent.
-_PROTECTED_PREFIXES = ("auth:", "webhooks:", "retention:")
+# treat every protected key as if absent. The list comes from the core so every
+# shell hides the same keys.
+_PROTECTED_PREFIXES = tuple(reserved_setting_prefixes())
 
 
 def _is_protected(key: str) -> bool:
