@@ -345,13 +345,34 @@ taskito.deletePeriodic("daily-digest");  // unschedule; false if unknown
 
 <SdkOnly sdk="python">
 
-There's no public API yet to list, pause, or delete a registered schedule —
-`@queue.periodic()` is the only entry point, and schedules are re-registered
-as a batch every time <SdkLink to="guides/core/workers">`run_worker()`</SdkLink>
-starts. Removing a `@queue.periodic()` decorator from your code does **not**
-delete its row from storage — the schedule keeps firing and enqueuing jobs
-for a task name no running worker handles anymore, so retire a schedule
-deliberately rather than just deleting the decorator.
+```python
+queue.list_periodic()  # every registered schedule, enabled or paused
+
+queue.pause_periodic("daily-digest")  # stop firing, keep the registration
+queue.resume_periodic("daily-digest")
+queue.delete_periodic("daily-digest")  # unschedule; False if unknown
+```
+
+Each entry is a `PeriodicInfo` — `name`, `task_name`, `cron_expr`, `queue`,
+`enabled`, `last_run`, `next_run`, `timezone`. Timestamps are Unix
+milliseconds, and `last_run` is `None` until the schedule first fires:
+
+```python
+for schedule in queue.list_periodic():
+    state = "on" if schedule.enabled else "paused"
+    print(f"{schedule.name} [{state}] next={schedule.next_run}")
+```
+
+Every method also has an `a`-prefixed async form — `alist_periodic`,
+`apause_periodic`, `aresume_periodic`, `adelete_periodic`.
+
+These act on the catalog in storage, which is written when
+<SdkLink to="guides/core/workers">`run_worker()`</SdkLink> starts — a producer
+process that never starts a worker sees an empty list. `@queue.periodic()` only
+*declares* a schedule, so removing the decorator does **not** delete its row:
+the schedule keeps firing and enqueuing jobs for a task name no running worker
+handles anymore. Retire one with `delete_periodic()` rather than by deleting
+the decorator.
 
 </SdkOnly>
 
