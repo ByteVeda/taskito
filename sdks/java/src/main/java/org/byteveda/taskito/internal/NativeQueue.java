@@ -178,6 +178,9 @@ public final class NativeQueue {
     public static native boolean setSubscriptionActive(
             long handle, String topic, String subscriptionName, boolean active);
 
+    /** A JSON array of per-subscription backlog snapshots, one per registered subscription. */
+    public static native String topicBacklogStats(long handle);
+
     /** Drop ephemeral subscriptions whose owning worker is gone; returns the count removed. */
     public static native long reapEphemeralSubscriptions(long handle);
 

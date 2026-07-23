@@ -12,7 +12,7 @@ use taskito_core::storage::records::{
     CircuitBreakerState, JobError, LockInfo, PeriodicTask, ReplayEntry, Subscription, TaskLogEntry,
     TaskMetric, Topic, TopicLogStats, TopicMessage, WorkerInfo,
 };
-use taskito_core::storage::{DeadJob, QueueStats};
+use taskito_core::storage::{DeadJob, QueueStats, SubscriptionBacklogStats};
 
 use crate::error::BindingError;
 
@@ -290,6 +290,41 @@ impl From<&TopicLogStats> for TopicLogStatsView {
             cursor: s.cursor.clone(),
             lag: s.lag,
             oldest_unacked_age_ms: s.oldest_unacked_age_ms,
+        }
+    }
+}
+
+/// Java-facing backlog snapshot for one topic subscription. One entry per
+/// *registered* subscription — paused and ephemeral ones included — even at zero
+/// backlog. `oldest_pending_age_ms` is null when nothing is pending.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicStatsView<'a> {
+    pub topic: &'a str,
+    pub subscription: &'a str,
+    pub task_name: &'a str,
+    pub queue: &'a str,
+    pub active: bool,
+    pub durable: bool,
+    pub pending: i64,
+    pub running: i64,
+    pub dead: i64,
+    pub oldest_pending_age_ms: Option<i64>,
+}
+
+impl<'a> From<&'a SubscriptionBacklogStats> for TopicStatsView<'a> {
+    fn from(s: &'a SubscriptionBacklogStats) -> Self {
+        Self {
+            topic: &s.topic,
+            subscription: &s.subscription_name,
+            task_name: &s.task_name,
+            queue: &s.queue,
+            active: s.active,
+            durable: s.durable,
+            pending: s.pending,
+            running: s.running,
+            dead: s.dead,
+            oldest_pending_age_ms: s.oldest_pending_age_ms,
         }
     }
 }

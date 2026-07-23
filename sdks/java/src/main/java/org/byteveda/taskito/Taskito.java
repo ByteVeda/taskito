@@ -41,6 +41,7 @@ import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
 import org.byteveda.taskito.model.TopicMessage;
+import org.byteveda.taskito.model.TopicStat;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueGate;
@@ -458,6 +459,17 @@ public interface Taskito extends AutoCloseable {
 
     /** One topic's active subscriptions. */
     List<Subscription> listSubscriptions(String topic);
+
+    /**
+     * Backlog snapshot per subscription, across all topics. Every registered
+     * subscription appears — paused and ephemeral ones included — even with nothing
+     * queued, so the full subscriber list comes from one call. Counts are computed
+     * live off indexed columns, so this is safe to poll.
+     */
+    List<TopicStat> topicStats();
+
+    /** As {@link #topicStats()}, filtered to one topic. */
+    List<TopicStat> topicStats(String topic);
 
     /** Distinct topics that currently have at least one subscription. */
     List<String> listTopics();

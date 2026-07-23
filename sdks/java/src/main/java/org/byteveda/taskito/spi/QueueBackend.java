@@ -294,6 +294,11 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
     }
 
+    /** A JSON array of per-subscription backlog snapshots, one per registered subscription. */
+    default String topicBacklogStatsJson() {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
     /** Drop ephemeral subscriptions whose owning worker is gone; returns the count removed. */
     default long reapEphemeralSubscriptions() {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
