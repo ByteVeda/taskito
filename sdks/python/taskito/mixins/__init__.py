@@ -8,6 +8,7 @@ from taskito.mixins.locks import QueueLockMixin
 from taskito.mixins.middleware_admin import QueueMiddlewareAdminMixin
 from taskito.mixins.operations import QueueOperationsMixin
 from taskito.mixins.overrides import QueueOverridesMixin
+from taskito.mixins.periodic import QueuePeriodicMixin
 from taskito.mixins.predicates import QueuePredicateMixin
 from taskito.mixins.pubsub import QueuePubSubMixin
 from taskito.mixins.resources import QueueResourceMixin
@@ -23,6 +24,7 @@ __all__ = [
     "QueueMiddlewareAdminMixin",
     "QueueOperationsMixin",
     "QueueOverridesMixin",
+    "QueuePeriodicMixin",
     "QueuePredicateMixin",
     "QueuePubSubMixin",
     "QueueResourceMixin",
