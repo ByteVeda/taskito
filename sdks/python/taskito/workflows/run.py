@@ -12,7 +12,9 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from .types import NodeSnapshot, NodeStatus, WorkflowState, WorkflowStatus
+from taskito.enums import coerce_enum
+
+from .types import DiagramFormat, NodeSnapshot, NodeStatus, WorkflowState, WorkflowStatus
 from .visualization import nodes_and_edges_from_dag_bytes, render_dot, render_mermaid
 
 if TYPE_CHECKING:
@@ -115,11 +117,12 @@ class WorkflowRun:
         """Cancel any pending steps and mark the run as cancelled."""
         self._queue._inner.cancel_workflow_run(self.id)
 
-    def visualize(self, fmt: str = "mermaid") -> str:
+    def visualize(self, fmt: DiagramFormat | str = DiagramFormat.MERMAID) -> str:
         """Render the workflow DAG with live node statuses.
 
         Args:
-            fmt: Output format — ``"mermaid"`` or ``"dot"``.
+            fmt: Output format — a :class:`DiagramFormat` or its string. An
+                unknown one raises rather than silently falling back to Mermaid.
         """
         dag_bytes = self._queue._inner.get_workflow_definition_dag(self.id)
         nodes, edges = nodes_and_edges_from_dag_bytes(dag_bytes)
@@ -129,7 +132,7 @@ class WorkflowRun:
         for name, node in snapshot.nodes.items():
             statuses[name] = node.status.value
 
-        if fmt == "dot":
+        if coerce_enum(DiagramFormat, fmt, param="fmt") is DiagramFormat.DOT:
             return render_dot(nodes, edges, statuses)
         return render_mermaid(nodes, edges, statuses)
 

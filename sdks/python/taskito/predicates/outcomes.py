@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
+
+
+class PredicateAction(str, enum.Enum):
+    """What a task does when its predicate returns a plain ``False``.
+
+    The richer :class:`Defer` / :class:`Cancel` sentinels say it per-evaluation;
+    this is the per-task default for the bare boolean.
+    """
+
+    DEFER = "defer"
+    """Re-enqueue the job after ``default_defer_seconds``."""
+
+    CANCEL = "cancel"
+    """Skip the job terminally."""
 
 
 @dataclass(frozen=True, slots=True)

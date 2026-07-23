@@ -7,6 +7,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from taskito.events import EventType
+from taskito.workflows.types import GateAction
 
 if TYPE_CHECKING:
     from taskito.workflows.tracker.tracker import WorkflowTracker
@@ -50,7 +51,9 @@ def enter_gate(tracker: WorkflowTracker, run_id: str, node_name: str, config: _R
         timer.start()
 
 
-def on_gate_timeout(tracker: WorkflowTracker, run_id: str, node_name: str, action: str) -> None:
+def on_gate_timeout(
+    tracker: WorkflowTracker, run_id: str, node_name: str, action: GateAction
+) -> None:
     """Handle gate timeout expiry."""
     with tracker._state_lock:
         # If the run was cleaned up (e.g., cancelled before timeout fired),
@@ -58,6 +61,6 @@ def on_gate_timeout(tracker: WorkflowTracker, run_id: str, node_name: str, actio
         if (run_id, node_name) not in tracker._gate_timers:
             return
         tracker._gate_timers.pop((run_id, node_name), None)
-    approved = action == "approve"
+    approved = action is GateAction.APPROVE
     error = None if approved else "gate timeout"
     tracker.resolve_gate(run_id, node_name, approved=approved, error=error)

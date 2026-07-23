@@ -19,9 +19,11 @@ from taskito.batching.config import BatchConfig
 from taskito.codecs import CodecSerializer
 from taskito.context import _clear_context
 from taskito.dashboard.middleware_store import MiddlewareDisableStore
+from taskito.enums import coerce_enum
 from taskito.inject import Inject, _InjectAlias
 from taskito.middleware import middleware_key
 from taskito.predicates.core import coerce_predicate
+from taskito.predicates.outcomes import PredicateAction
 from taskito.task import TaskWrapper
 from taskito.task_lifecycle import run_lifecycle
 
@@ -79,7 +81,7 @@ class QueueDecoratorMixin:
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
     _task_predicates: dict[str, Predicate]
-    _task_predicate_on_false: dict[str, str]
+    _task_predicate_on_false: dict[str, PredicateAction]
     _task_predicate_extras: dict[str, dict[str, Any]]
     _task_default_defer: dict[str, float]
     _task_predicate_serialized: dict[str, dict[str, Any] | None]
@@ -196,7 +198,7 @@ class QueueDecoratorMixin:
         compensates: TaskWrapper | str | None = None,
         batch: bool | dict[str, Any] | None = None,
         predicate: Predicate | Callable[..., Any] | None = None,
-        on_false: str = "defer",
+        on_false: PredicateAction | str = PredicateAction.DEFER,
         predicate_extras: dict[str, Any] | None = None,
         default_defer_seconds: float = 60.0,
         # Appended, not slotted next to their related options: this signature is
@@ -299,11 +301,10 @@ class QueueDecoratorMixin:
             ``.apply_async(args=..., kwargs=..., ...)`` for enqueueing.
 
         Raises:
-            ValueError: ``on_false`` is not ``"defer"`` or ``"cancel"``, or
+            ValueError: ``on_false`` is not a :class:`PredicateAction` value, or
                 ``default_defer_seconds`` is negative.
         """
-        if on_false not in {"defer", "cancel"}:
-            raise ValueError(f"on_false must be 'defer' or 'cancel', got {on_false!r}")
+        on_false_action = coerce_enum(PredicateAction, on_false, param="on_false")
         if default_defer_seconds < 0:
             raise ValueError("default_defer_seconds must be >= 0")
         batch_config = BatchConfig.normalize(batch)
@@ -400,7 +401,7 @@ class QueueDecoratorMixin:
                 coerced = coerce_predicate(predicate)
                 if coerced is not None:
                     self._task_predicates[task_name] = coerced
-                    self._task_predicate_on_false[task_name] = on_false
+                    self._task_predicate_on_false[task_name] = on_false_action
                     if predicate_extras:
                         self._task_predicate_extras[task_name] = dict(predicate_extras)
                     self._task_default_defer[task_name] = default_defer_seconds

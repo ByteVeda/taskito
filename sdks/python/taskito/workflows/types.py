@@ -6,6 +6,33 @@ import enum
 from dataclasses import dataclass, field
 
 
+class GateAction(str, enum.Enum):
+    """What an approval gate does when its timeout elapses."""
+
+    APPROVE = "approve"
+    """Treat the gate as approved — the node completes and successors run."""
+
+    REJECT = "reject"
+    """Treat the gate as rejected — the node fails."""
+
+
+class FanStrategy(str, enum.Enum):
+    """How a step fans out over, or back in from, its predecessor's result."""
+
+    EACH = "each"
+    """Fan-out: one child job per item of the predecessor's result list."""
+
+    ALL = "all"
+    """Fan-in: collect every fan-out child's result into one list."""
+
+
+class DiagramFormat(str, enum.Enum):
+    """Render target for :meth:`Workflow.visualize`."""
+
+    MERMAID = "mermaid"
+    DOT = "dot"
+
+
 class WorkflowState(str, enum.Enum):
     """Terminal and intermediate states of a workflow run."""
 

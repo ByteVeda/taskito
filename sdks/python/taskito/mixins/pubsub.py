@@ -9,7 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from taskito.mixins._log_consumer import LogConsumerThread
+from taskito.enums import coerce_enum
+from taskito.mixins._log_consumer import ConsumerErrorAction, LogConsumerThread
 from taskito.notes import validate_and_encode_notes
 from taskito.result import JobResult
 
@@ -160,7 +161,7 @@ class QueuePubSubMixin:
         *,
         poll_interval: float = 1.0,
         batch_size: int = 100,
-        on_error: str = "retry",
+        on_error: ConsumerErrorAction | str = ConsumerErrorAction.RETRY,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator: register ``fn`` as a managed consumer of log ``topic``.
 
@@ -180,11 +181,11 @@ class QueuePubSubMixin:
             name: Stable subscription identity. Defaults to the handler name.
             poll_interval: Seconds to wait after an empty poll before re-reading.
             batch_size: Max messages pulled per poll.
-            on_error: ``"retry"`` (default) leaves the failed message un-acked so
-                the batch re-reads; ``"skip"`` acks past it and continues.
+            on_error: :class:`ConsumerErrorAction` (or its string) —
+                ``"retry"`` (default) leaves the failed message un-acked so the
+                batch re-reads; ``"skip"`` acks past it and continues.
         """
-        if on_error not in ("retry", "skip"):
-            raise ValueError(f"on_error must be 'retry' or 'skip', got {on_error!r}")
+        on_error_action = coerce_enum(ConsumerErrorAction, on_error, param="on_error")
         # A non-finite/non-positive interval spins on empty polls; a non-positive
         # batch size never makes progress.
         if not (poll_interval > 0 and math.isfinite(poll_interval)):
@@ -203,7 +204,7 @@ class QueuePubSubMixin:
                 "handler": fn,
                 "poll_interval": poll_interval,
                 "batch_size": batch_size,
-                "on_error": on_error,
+                "on_error": on_error_action,
             }
             # Replace, don't append: re-decorating the same (topic, name) (module
             # reloads, test fixtures) must not spawn duplicate consumer threads.
