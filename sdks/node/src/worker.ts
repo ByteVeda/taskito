@@ -223,6 +223,7 @@ export class Worker {
         error: outcome.error ?? undefined,
         retryCount: outcome.retryCount ?? undefined,
         timedOut: outcome.timedOut ?? undefined,
+        durationMs: outcome.durationMs ?? undefined,
       };
       emitter.emit(mapping.event, event);
       for (const mw of middlewareFor(outcome.taskName)) {

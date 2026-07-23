@@ -21,7 +21,13 @@ queue.on("job.dead", (e) => alertOps(e));
 | `job.cancelled` | A job was cancelled. |
 
 Each event payload carries the `jobId`, `taskName`, `queue`, and outcome
-details (error, retry count, `timedOut`).
+details (error, retry count, `timedOut`). `durationMs` reports how long the job
+ran, as the runtime measured it — absent when nothing measured the run, e.g. a
+job that failed before it ever executed.
+
+```ts
+queue.on("job.completed", (e) => metrics.timing(e.taskName, e.durationMs));
+```
 
 <Callout type="info">
   Events are fire-and-forget notifications. To *wrap* execution (timing,

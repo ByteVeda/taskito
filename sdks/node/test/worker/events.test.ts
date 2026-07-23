@@ -55,6 +55,22 @@ it("emits job.completed and runs before/after/onCompleted middleware", async () 
   expect(calls).toContain("completed");
 });
 
+it("reports how long the task ran", async () => {
+  const queue = newQueue();
+  const events: OutcomeEvent[] = [];
+  queue.on("job.completed", (event) => events.push(event));
+  queue.task("slow", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+
+  queue.enqueue("slow", []);
+  worker = queue.runWorker();
+
+  expect(await waitFor(() => events.length > 0)).toBe(true);
+  // The handler slept 60ms; allow for timer jitter.
+  expect(events[0]?.durationMs).toBeGreaterThanOrEqual(50);
+});
+
 it("survives async listener and hook rejections", async () => {
   const queue = newQueue();
   const events: OutcomeEvent[] = [];
