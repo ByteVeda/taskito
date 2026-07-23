@@ -85,7 +85,7 @@ class _Step:
     # task name; the ``INHERIT_COMPENSATOR`` sentinel = look up the
     # decorator-level ``@queue.task(compensates=...)`` default when the
     # workflow is compiled.
-    compensates: str | None | _InheritCompensator = field(
+    compensates: str | _InheritCompensator | None = field(
         default_factory=lambda: INHERIT_COMPENSATOR
     )
 
@@ -145,7 +145,7 @@ class Workflow:
         fan_out: FanStrategy | str | None = None,
         fan_in: FanStrategy | str | None = None,
         condition: WorkflowCondition | str | Callable | None = None,
-        compensates: HasTaskName | str | None | _InheritCompensator = INHERIT_COMPENSATOR,
+        compensates: HasTaskName | str | _InheritCompensator | None = INHERIT_COMPENSATOR,
     ) -> Workflow:
         """Add a step to the workflow.
 
@@ -234,7 +234,7 @@ class Workflow:
 
         # Resolve the compensates= argument to either a task-name string,
         # ``None`` (disabled), or the INHERIT sentinel (look up at compile).
-        resolved_compensates: str | None | _InheritCompensator
+        resolved_compensates: str | _InheritCompensator | None
         if isinstance(compensates, _InheritCompensator):
             resolved_compensates = INHERIT_COMPENSATOR
         elif compensates is None:
