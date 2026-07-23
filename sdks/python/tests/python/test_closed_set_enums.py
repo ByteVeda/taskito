@@ -6,8 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from taskito import InterceptionMode, PredicateAction, Queue
+from taskito import InterceptionMode, PredicateAction, Queue, StorageBackend
+from taskito.dashboard.delivery_store import DeliveryStatus, DeliveryStore
+from taskito.dashboard.errors import _BadRequest
+from taskito.dashboard.handlers.webhook_deliveries import handle_list_deliveries
+from taskito.dashboard.webhook_store import WebhookSubscriptionStore
+from taskito.interception.strategy import Strategy
 from taskito.mixins._log_consumer import ConsumerErrorAction
+from taskito.workflows import Workflow, WorkflowCondition
 from taskito.workflows.types import DiagramFormat, FanStrategy, GateAction
 
 
@@ -19,6 +25,10 @@ def test_wire_values_are_the_cross_sdk_contract() -> None:
     assert GateAction.APPROVE.value == "approve"
     assert FanStrategy.EACH.value == "each"
     assert DiagramFormat.DOT.value == "dot"
+    assert WorkflowCondition.ON_SUCCESS.value == "on_success"
+    assert StorageBackend.POSTGRES.value == "postgres"
+    assert Strategy.PROXY.value == "proxy"
+    assert DeliveryStatus.DEAD.value == "dead"
     # A (str, Enum) member carries its value as its string content, which is what
     # the native layer reads — str() would render "FanStrategy.EACH" instead.
     assert FanStrategy.EACH.encode() == b"each"
@@ -74,7 +84,6 @@ def test_log_consumer_on_error_typo_raises(queue: Queue) -> None:
 
 def test_unknown_visualize_format_raises_instead_of_defaulting(queue: Queue) -> None:
     """Previously anything that wasn't 'dot' silently rendered Mermaid."""
-    from taskito.workflows import Workflow
 
     @queue.task()
     def step() -> None:
@@ -85,3 +94,85 @@ def test_unknown_visualize_format_raises_instead_of_defaulting(queue: Queue) -> 
     assert "graph" in workflow.visualize("mermaid")
     with pytest.raises(ValueError, match="'mermaid', 'dot'"):
         workflow.visualize("graphviz")
+
+
+def test_step_condition_accepts_enum_and_string(queue: Queue) -> None:
+    @queue.task()
+    def step() -> None:
+        """A node to gate."""
+
+    wf = Workflow("wf").step("a", step)
+    wf.step("b", step, after="a", condition=WorkflowCondition.ON_FAILURE)
+    wf.step("c", step, after="a", condition="always")
+    assert wf._steps["b"].condition is WorkflowCondition.ON_FAILURE
+    assert wf._steps["c"].condition is WorkflowCondition.ALWAYS
+
+
+def test_step_condition_typo_raises(queue: Queue) -> None:
+    @queue.task()
+    def step() -> None:
+        """A node that never gets a valid condition."""
+
+    wf = Workflow("wf").step("a", step)
+    with pytest.raises(ValueError, match="'on_success', 'on_failure', 'always'"):
+        wf.step("b", step, after="a", condition="on_succes")
+
+
+def test_gate_condition_typo_raises(queue: Queue) -> None:
+    @queue.task()
+    def step() -> None:
+        """Predecessor for the gate."""
+
+    wf = Workflow("wf").step("a", step)
+    with pytest.raises(ValueError, match="'on_success', 'on_failure', 'always'"):
+        wf.gate("g", after="a", condition="whenever")
+
+
+def test_backend_accepts_enum_and_string(tmp_path: Path) -> None:
+    enum_queue = Queue(db_path=str(tmp_path / "a.db"), backend=StorageBackend.SQLITE)
+    string_queue = Queue(db_path=str(tmp_path / "b.db"), backend="sqlite")
+    try:
+        # Normalized to the wire string so the display / native layer see "sqlite".
+        assert enum_queue._backend == "sqlite"
+        assert string_queue._backend == "sqlite"
+    finally:
+        enum_queue.close()
+        string_queue.close()
+
+
+def test_register_type_accepts_enum_and_string(tmp_path: Path) -> None:
+    queue = Queue(db_path=str(tmp_path / "a.db"), interception="lenient")
+    try:
+        queue.register_type(complex, Strategy.PASS)
+        queue.register_type(bytes, "pass")
+    finally:
+        queue.close()
+
+
+def test_register_type_typo_raises(tmp_path: Path) -> None:
+    queue = Queue(db_path=str(tmp_path / "a.db"), interception="lenient")
+    try:
+        with pytest.raises(ValueError, match="'pass', 'convert'"):
+            queue.register_type(complex, "passs")
+    finally:
+        queue.close()
+
+
+def test_delivery_status_filter_round_trips_and_rejects_typo(queue: Queue) -> None:
+    sub = WebhookSubscriptionStore(queue).create(url="https://example.test/hook", events=["*"])
+    store = DeliveryStore(queue)
+    store.record_attempt(
+        sub.id, event="job.completed", payload={}, status=DeliveryStatus.DELIVERED, attempts=1
+    )
+    store.record_attempt(
+        sub.id, event="job.failed", payload={}, status=DeliveryStatus.DEAD, attempts=3
+    )
+
+    only_dead = store.list_for(sub.id, status=DeliveryStatus.DEAD)
+    assert [r.status for r in only_dead] == [DeliveryStatus.DEAD]
+
+    body = handle_list_deliveries(queue, {"status": ["delivered"]}, sub.id)
+    assert [item["status"] for item in body["items"]] == ["delivered"]
+
+    with pytest.raises(_BadRequest, match="delivered, failed, dead"):
+        handle_list_deliveries(queue, {"status": ["gone"]}, sub.id)
