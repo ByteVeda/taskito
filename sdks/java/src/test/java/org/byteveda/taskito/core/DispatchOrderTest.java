@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.io.TempDir;
 class DispatchOrderTest {
 
     @Test
+    @SuppressWarnings("deprecation")
     void validatesOrder(@TempDir Path dir) {
         try (Taskito queue =
                 Taskito.builder().url(dir.resolve("v.db").toString()).open()) {
@@ -54,7 +56,7 @@ class DispatchOrderTest {
     void lifoDispatchesNewestFirst(@TempDir Path dir) throws Exception {
         try (Taskito queue =
                 Taskito.builder().url(dir.resolve("lifo.db").toString()).open()) {
-            queue.dispatchOrder("default", "lifo");
+            queue.dispatchOrder("default", DispatchOrder.LIFO);
             List<Integer> order = runAndRecord(queue, 6);
             assertEquals(List.of(5, 4, 3, 2, 1, 0), order, "LIFO runs newest-first");
         }

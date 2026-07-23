@@ -17,6 +17,7 @@ import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.model.TaskLogLevel;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
@@ -154,7 +155,7 @@ class QueueTest {
     void taskLogsRoundTrip(@TempDir Path dir) {
         try (Taskito queue = open(dir)) {
             String id = queue.enqueue("send_email", Collections.singletonMap("to", "a"));
-            queue.writeTaskLog(id, "send_email", "info", "hello");
+            queue.writeTaskLog(id, "send_email", TaskLogLevel.INFO, "hello");
             List<TaskLog> logs = queue.getTaskLogs(id);
             assertEquals(1, logs.size());
             assertEquals("hello", logs.get(0).message);

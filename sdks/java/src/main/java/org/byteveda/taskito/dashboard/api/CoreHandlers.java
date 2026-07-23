@@ -89,6 +89,9 @@ public final class CoreHandlers {
     }
 
     /** Logs across jobs filtered by task/level; {@code since} is a lookback in seconds. */
+    // Deliberately the string overload: an unknown ?level= is untrusted input that
+    // must filter to nothing, not fail the request.
+    @SuppressWarnings("deprecation")
     public Object logs(Map<String, String> query) {
         long sinceSeconds = Http.longParam(query, "since", 3600);
         long sinceMs = System.currentTimeMillis() - sinceSeconds * 1000;

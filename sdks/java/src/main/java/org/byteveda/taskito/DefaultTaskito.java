@@ -35,6 +35,7 @@ import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.model.EffectiveRetention;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
@@ -46,6 +47,7 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskLogLevel;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
@@ -79,6 +81,7 @@ import org.byteveda.taskito.workflows.GateConfig;
 import org.byteveda.taskito.workflows.Step;
 import org.byteveda.taskito.workflows.Workflow;
 import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowState;
 import org.byteveda.taskito.workflows.WorkflowStatus;
 
 /**
@@ -218,12 +221,20 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
+    public Taskito dispatchOrder(String queue, DispatchOrder order) {
+        dispatchOrders.put(queue, order.wire());
+        return this;
+    }
+
+    @Override
+    @Deprecated
     public Taskito dispatchOrder(String queue, String order) {
+        // Keeps throwing IllegalArgumentException rather than the model enum's
+        // SerializationException: callers of this overload predate the enum.
         if (!"fifo".equals(order) && !"lifo".equals(order)) {
             throw new IllegalArgumentException("order must be 'fifo' or 'lifo'");
         }
-        dispatchOrders.put(queue, order);
-        return this;
+        return dispatchOrder(queue, DispatchOrder.fromWire(order));
     }
 
     /**
@@ -701,13 +712,25 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     // ── Logs ────────────────────────────────────────────────────────
 
     @Override
-    public void writeTaskLog(String jobId, String taskName, String level, String message) {
-        backend.writeTaskLog(jobId, taskName, level, message, null);
+    public void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message) {
+        backend.writeTaskLog(jobId, taskName, level.wire(), message, null);
     }
 
     @Override
+    public void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message, String extra) {
+        backend.writeTaskLog(jobId, taskName, level.wire(), message, extra);
+    }
+
+    @Override
+    @Deprecated
+    public void writeTaskLog(String jobId, String taskName, String level, String message) {
+        writeTaskLog(jobId, taskName, TaskLogLevel.fromWire(level), message);
+    }
+
+    @Override
+    @Deprecated
     public void writeTaskLog(String jobId, String taskName, String level, String message, String extra) {
-        backend.writeTaskLog(jobId, taskName, level, message, extra);
+        writeTaskLog(jobId, taskName, TaskLogLevel.fromWire(level), message, extra);
     }
 
     @Override
@@ -721,8 +744,15 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
+    public List<TaskLog> queryTaskLogs(String taskName, TaskLogLevel level, long sinceMs, long limit) {
+        String wire = level == null ? null : level.wire();
+        return decodeList(backend.queryTaskLogsJson(taskName, wire, sinceMs, limit), TaskLog.class);
+    }
+
+    @Override
+    @Deprecated
     public List<TaskLog> queryTaskLogs(String taskName, String level, long sinceMs, long limit) {
-        return decodeList(backend.queryTaskLogsJson(taskName, level, sinceMs, limit), TaskLog.class);
+        return queryTaskLogs(taskName, level == null ? null : TaskLogLevel.fromWire(level), sinceMs, limit);
     }
 
     @Override
@@ -1145,8 +1175,16 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
+    public List<WorkflowRunInfo> listWorkflowRuns(
+            String definitionName, WorkflowState state, long limit, long offset) {
+        String wire = state == null ? null : state.wire();
+        return decodeList(backend.listWorkflowRunsJson(definitionName, wire, limit, offset), WorkflowRunInfo.class);
+    }
+
+    @Override
+    @Deprecated
     public List<WorkflowRunInfo> listWorkflowRuns(String definitionName, String state, long limit, long offset) {
-        return decodeList(backend.listWorkflowRunsJson(definitionName, state, limit, offset), WorkflowRunInfo.class);
+        return listWorkflowRuns(definitionName, state == null ? null : WorkflowState.fromWire(state), limit, offset);
     }
 
     @Override
