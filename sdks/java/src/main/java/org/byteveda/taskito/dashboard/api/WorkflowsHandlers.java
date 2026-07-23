@@ -25,9 +25,6 @@ public final class WorkflowsHandlers {
         this.queue = queue;
     }
 
-    // Deliberately the string overload: an unknown ?state= is untrusted input that
-    // must filter to nothing, not fail the request.
-    @SuppressWarnings("deprecation")
     public Object runs(Map<String, String> query) {
         long limit = Http.longParam(query, "limit", DEFAULT_LIMIT);
         long offset = Http.longParam(query, "offset", 0);

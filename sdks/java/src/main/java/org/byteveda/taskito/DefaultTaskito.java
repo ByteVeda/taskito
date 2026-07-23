@@ -81,7 +81,6 @@ import org.byteveda.taskito.workflows.GateConfig;
 import org.byteveda.taskito.workflows.Step;
 import org.byteveda.taskito.workflows.Workflow;
 import org.byteveda.taskito.workflows.WorkflowRun;
-import org.byteveda.taskito.workflows.WorkflowState;
 import org.byteveda.taskito.workflows.WorkflowStatus;
 
 /**
@@ -744,15 +743,8 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
-    public List<TaskLog> queryTaskLogs(String taskName, TaskLogLevel level, long sinceMs, long limit) {
-        String wire = level == null ? null : level.wire();
-        return decodeList(backend.queryTaskLogsJson(taskName, wire, sinceMs, limit), TaskLog.class);
-    }
-
-    @Override
-    @Deprecated
     public List<TaskLog> queryTaskLogs(String taskName, String level, long sinceMs, long limit) {
-        return queryTaskLogs(taskName, level == null ? null : TaskLogLevel.fromWire(level), sinceMs, limit);
+        return decodeList(backend.queryTaskLogsJson(taskName, level, sinceMs, limit), TaskLog.class);
     }
 
     @Override
@@ -1175,15 +1167,8 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
-    public List<WorkflowRunInfo> listWorkflowRuns(String definitionName, WorkflowState state, long limit, long offset) {
-        String wire = state == null ? null : state.wire();
-        return decodeList(backend.listWorkflowRunsJson(definitionName, wire, limit, offset), WorkflowRunInfo.class);
-    }
-
-    @Override
-    @Deprecated
     public List<WorkflowRunInfo> listWorkflowRuns(String definitionName, String state, long limit, long offset) {
-        return listWorkflowRuns(definitionName, state == null ? null : WorkflowState.fromWire(state), limit, offset);
+        return decodeList(backend.listWorkflowRunsJson(definitionName, state, limit, offset), WorkflowRunInfo.class);
     }
 
     @Override

@@ -368,15 +368,13 @@ public interface Taskito extends AutoCloseable {
     /** Logs for a job with id after {@code afterId} (UUIDv7-ordered cursor); null = all. */
     List<TaskLog> getTaskLogsAfter(String jobId, String afterId);
 
-    /** Logs across jobs filtered by task/level, at or after {@code sinceMs}, capped at {@code limit}. */
-    List<TaskLog> queryTaskLogs(String taskName, TaskLogLevel level, long sinceMs, long limit);
-
     /**
-     * Logs across jobs filtered by a wire-form level.
-     *
-     * @deprecated use {@link #queryTaskLogs(String, TaskLogLevel, long, long)}.
+     * Logs across jobs filtered by task/level, at or after {@code sinceMs}, capped at
+     * {@code limit}. {@code level} is the wire form ({@link TaskLogLevel#wire()}), not the
+     * enum: a filter is open by nature — {@code null} means no filter, and an unrecognized
+     * value must return nothing rather than throw, since it typically arrives from a query
+     * string.
      */
-    @Deprecated
     List<TaskLog> queryTaskLogs(String taskName, String level, long sinceMs, long limit);
 
     // ── Locks ───────────────────────────────────────────────────────
@@ -586,15 +584,12 @@ public interface Taskito extends AutoCloseable {
     /** Cancel a workflow run: skip its pending nodes and mark it cancelled. */
     void cancelWorkflow(String runId);
 
-    /** Workflow run summaries, filtered by definition name and/or state, paged. Nulls mean no filter. */
-    List<WorkflowRunInfo> listWorkflowRuns(String definitionName, WorkflowState state, long limit, long offset);
-
     /**
-     * Workflow run summaries filtered by a wire-form state.
-     *
-     * @deprecated use {@link #listWorkflowRuns(String, WorkflowState, long, long)}.
+     * Workflow run summaries, filtered by definition name and/or state, paged. Nulls mean no
+     * filter. {@code state} is the wire form ({@link WorkflowState#wire()}) rather than the enum,
+     * so that a bare {@code null} filter stays unambiguous; unlike the log level, an
+     * unrecognized state is rejected by the core.
      */
-    @Deprecated
     List<WorkflowRunInfo> listWorkflowRuns(String definitionName, String state, long limit, long offset);
 
     /** A single workflow run summary, or empty if the run no longer exists. */
