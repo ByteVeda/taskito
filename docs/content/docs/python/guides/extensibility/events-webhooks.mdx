@@ -37,11 +37,11 @@ payloads, delivery logs, and the REST API — e.g.
 | Event | Fires when | Payload fields |
 |---|---|---|
 | `JOB_ENQUEUED` | A job is added to the queue | `job_id`, `task_name`, `queue` |
-| `JOB_COMPLETED` | A job finishes successfully | `job_id`, `task_name`, `queue` |
-| `JOB_FAILED` | A job raises an exception (before retry) | `job_id`, `task_name`, `queue`, `error` |
-| `JOB_RETRYING` | A failed job will be retried | `job_id`, `task_name`, `error`, `retry_count` |
-| `JOB_DEAD` | A job exhausts all retries and enters the DLQ | `job_id`, `task_name`, `error` |
-| `JOB_CANCELLED` | A job is cancelled | `job_id`, `task_name` |
+| `JOB_COMPLETED` | A job finishes successfully | `job_id`, `task_name`, `queue`, `duration_ms` |
+| `JOB_FAILED` | A job raises an exception (before retry) | `job_id`, `task_name`, `queue`, `error`, `duration_ms` |
+| `JOB_RETRYING` | A failed job will be retried | `job_id`, `task_name`, `error`, `retry_count`, `duration_ms` |
+| `JOB_DEAD` | A job exhausts all retries and enters the DLQ | `job_id`, `task_name`, `error`, `duration_ms` |
+| `JOB_CANCELLED` | A job is cancelled | `job_id`, `task_name`, `duration_ms` |
 | `WORKER_STARTED` | A worker process/thread comes online | `worker_id`, `hostname` |
 | `WORKER_STOPPED` | A worker process/thread shuts down | `worker_id`, `hostname` |
 | `WORKER_ONLINE` | Worker registered in storage (visible to fleet) | `worker_id`, `queues`, `pool` |
@@ -49,6 +49,10 @@ payloads, delivery logs, and the REST API — e.g.
 | `WORKER_UNHEALTHY` | Resource health transitions to unhealthy | `worker_id`, `resources` |
 | `QUEUE_PAUSED` | A named queue is paused | `queue` |
 | `QUEUE_RESUMED` | A paused queue is resumed | `queue` |
+
+`duration_ms` is how long the job ran, so a listener needn't time it. On the
+outcome events (`JOB_RETRYING`, `JOB_DEAD`, `JOB_CANCELLED`) it is `None` when
+nothing measured the run — a job that failed before it ever executed.
 
 ## In-process listeners
 

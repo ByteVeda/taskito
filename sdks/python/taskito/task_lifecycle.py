@@ -335,6 +335,9 @@ async def run_lifecycle(
                     "task_name": task_name,
                     "job_id": current_job.id,
                     "queue": current_job.queue_name,
+                    # Same key the outcome loop puts on retry/dead/cancelled events,
+                    # so a subscriber reads one duration field for every job event.
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000),
                 }
                 if error is not None:
                     event_payload["error"] = str(error)
