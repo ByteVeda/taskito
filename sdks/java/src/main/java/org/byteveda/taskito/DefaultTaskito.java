@@ -221,6 +221,9 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
 
     @Override
     public Taskito dispatchOrder(String queue, DispatchOrder order) {
+        if (order == null) {
+            throw new IllegalArgumentException("order must not be null");
+        }
         dispatchOrders.put(queue, order.wire());
         return this;
     }
@@ -712,11 +715,14 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
 
     @Override
     public void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message) {
-        backend.writeTaskLog(jobId, taskName, level.wire(), message, null);
+        writeTaskLog(jobId, taskName, level, message, null);
     }
 
     @Override
     public void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message, String extra) {
+        if (level == null) {
+            throw new IllegalArgumentException("level must not be null");
+        }
         backend.writeTaskLog(jobId, taskName, level.wire(), message, extra);
     }
 

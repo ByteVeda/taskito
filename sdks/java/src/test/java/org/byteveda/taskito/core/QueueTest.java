@@ -15,6 +15,7 @@ import java.util.Optional;
 import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
@@ -178,6 +179,15 @@ class QueueTest {
                     1,
                     queue.queryTaskLogs(null, TaskLogLevel.INFO.wire(), 0, 10).size());
             assertTrue(queue.queryTaskLogs(null, "verbose", 0, 10).isEmpty());
+        }
+    }
+
+    @Test
+    void typedOverloadsRejectANullEnum(@TempDir Path dir) {
+        // Without the guard these dereference the enum and surface an incidental NPE.
+        try (Taskito queue = open(dir)) {
+            assertThrows(IllegalArgumentException.class, () -> queue.dispatchOrder("default", (DispatchOrder) null));
+            assertThrows(IllegalArgumentException.class, () -> queue.writeTaskLog("j", "t", (TaskLogLevel) null, "m"));
         }
     }
 

@@ -27,7 +27,7 @@ class ResourceRuntime:
 
     Worker-scoped resources are initialized eagerly in dependency order.
     Pooled resources get a checkout pool. Thread-scoped resources use thread-local storage.
-    Request-scoped resources are created fresh per task.
+    Task-scoped resources are created fresh per task.
     """
 
     def __init__(self, definitions: dict[str, ResourceDefinition]) -> None:
@@ -110,7 +110,7 @@ class ResourceRuntime:
     def resolve(self, name: str) -> Any:
         """Return a live resource instance by name (worker scope only).
 
-        For task/request scopes, use acquire_for_task() instead.
+        For task- and pooled-scoped resources, use acquire_for_task() instead.
 
         Raises:
             ResourceNotFoundError: If the name was never registered.
