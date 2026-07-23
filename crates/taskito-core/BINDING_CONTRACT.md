@@ -272,7 +272,9 @@ reads leak credentials, writes spoof a published policy.
   `Cancelled { … }`. The shell builds this from task execution.
 - **`ResultOutcome`** — `scheduler/mod.rs`. Enum the core returns: `Success`, `Retry`,
   `DeadLettered`, `Cancelled`. The core decides retry-vs-DLQ from the retry budget; the
-  shell only dispatches events/middleware off it.
+  shell only dispatches events/middleware off it. Every variant carries `wall_time_ns`
+  (execution time as the worker measured it, 0 when nothing measured the run) so the shell
+  can report a duration without timing the job itself.
 - **`SchedulerConfig`** — `scheduler/mod.rs`. Poll interval, `batch_size`, aging,
   reap/cleanup/periodic intervals, `result_ttl_ms`, DLQ auto-retry policy.
 

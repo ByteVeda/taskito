@@ -87,6 +87,7 @@ impl Scheduler {
                         queue,
                         error,
                         timed_out,
+                        wall_time_ns,
                     });
                 }
 
@@ -115,6 +116,7 @@ impl Scheduler {
                             queue,
                             error,
                             timed_out,
+                            wall_time_ns,
                         });
                     }
                     let next_at = policy.next_retry_at(retry_count);
@@ -128,6 +130,7 @@ impl Scheduler {
                         error,
                         retry_count,
                         timed_out,
+                        wall_time_ns,
                     })
                 } else {
                     move_to_dlq(job.as_ref(), None)?;
@@ -137,6 +140,7 @@ impl Scheduler {
                         queue,
                         error,
                         timed_out,
+                        wall_time_ns,
                     })
                 }
             }
@@ -169,6 +173,7 @@ impl Scheduler {
                     job_id,
                     task_name,
                     queue,
+                    wall_time_ns,
                 })
             }
         }
@@ -227,6 +232,7 @@ impl Scheduler {
                         outcomes[idx] = Some(Ok(ResultOutcome::Success {
                             job_id: c.job_id.clone(),
                             task_name: c.task_name.clone(),
+                            wall_time_ns: c.wall_time_ns,
                         }));
                     }
                 }
@@ -271,6 +277,7 @@ impl Scheduler {
         Ok(ResultOutcome::Success {
             job_id: c.job_id.clone(),
             task_name: c.task_name.clone(),
+            wall_time_ns: c.wall_time_ns,
         })
     }
 }

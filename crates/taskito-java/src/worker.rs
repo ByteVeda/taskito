@@ -436,7 +436,7 @@ fn call_on_outcome(
     callbacks: &GlobalRef,
     outcome: &ResultOutcome,
 ) -> Result<(), String> {
-    let (kind, job_id, task_name, error, retry_count, timed_out) = describe(outcome);
+    let (kind, job_id, task_name, error, retry_count, timed_out, wall_time_ns) = describe(outcome);
     let kind_s = env.new_string(kind).map_err(|e| e.to_string())?;
     let job_s = env.new_string(job_id).map_err(|e| e.to_string())?;
     let task_s = env.new_string(task_name).map_err(|e| e.to_string())?;
@@ -449,7 +449,7 @@ fn call_on_outcome(
     if let Err(e) = env.call_method(
         callbacks,
         "onOutcome",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IZ)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IZJ)V",
         &[
             JValue::Object(&kind_s),
             JValue::Object(&job_s),
@@ -457,6 +457,7 @@ fn call_on_outcome(
             JValue::Object(&error_obj),
             JValue::Int(retry_count),
             JValue::Bool(u8::from(timed_out)),
+            JValue::Long(wall_time_ns),
         ],
     ) {
         let _ = env.exception_clear();
@@ -470,18 +471,21 @@ fn call_on_outcome(
 }
 
 /// Flatten a [`ResultOutcome`] into the fields `onOutcome` receives. `retry_count`
-/// is -1 when not applicable.
-fn describe(outcome: &ResultOutcome) -> (&str, &str, &str, Option<&str>, i32, bool) {
+/// is -1 when not applicable; `wall_time_ns` is 0 when the run wasn't measured.
+fn describe(outcome: &ResultOutcome) -> (&str, &str, &str, Option<&str>, i32, bool, i64) {
     match outcome {
-        ResultOutcome::Success { job_id, task_name } => {
-            ("success", job_id, task_name, None, -1, false)
-        }
+        ResultOutcome::Success {
+            job_id,
+            task_name,
+            wall_time_ns,
+        } => ("success", job_id, task_name, None, -1, false, *wall_time_ns),
         ResultOutcome::Retry {
             job_id,
             task_name,
             error,
             retry_count,
             timed_out,
+            wall_time_ns,
             ..
         } => (
             "retry",
@@ -490,17 +494,38 @@ fn describe(outcome: &ResultOutcome) -> (&str, &str, &str, Option<&str>, i32, bo
             Some(error),
             *retry_count,
             *timed_out,
+            *wall_time_ns,
         ),
         ResultOutcome::DeadLettered {
             job_id,
             task_name,
             error,
             timed_out,
+            wall_time_ns,
             ..
-        } => ("dead", job_id, task_name, Some(error), -1, *timed_out),
+        } => (
+            "dead",
+            job_id,
+            task_name,
+            Some(error),
+            -1,
+            *timed_out,
+            *wall_time_ns,
+        ),
         ResultOutcome::Cancelled {
-            job_id, task_name, ..
-        } => ("cancelled", job_id, task_name, None, -1, false),
+            job_id,
+            task_name,
+            wall_time_ns,
+            ..
+        } => (
+            "cancelled",
+            job_id,
+            task_name,
+            None,
+            -1,
+            false,
+            *wall_time_ns,
+        ),
     }
 }
 

@@ -91,6 +91,12 @@ async fn run_mesh_bridge(
     let _ = sched_task.await;
 }
 
+/// Nanoseconds to whole milliseconds, dropping the core's "not measured" 0 so a
+/// subscriber never reads an unmeasured run as an instant one.
+fn duration_ms(wall_time_ns: i64) -> Option<i64> {
+    (wall_time_ns > 0).then_some(wall_time_ns / 1_000_000)
+}
+
 /// Dispatch a ResultOutcome to Python middleware hooks and events.
 ///
 /// Called with the GIL held after `handle_result()` returns.
@@ -110,6 +116,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 error,
                 retry_count,
                 timed_out,
+                wall_time_ns,
             } => {
                 // Emit JOB_RETRYING event
                 let events_mod = py.import("taskito.events")?;
@@ -119,6 +126,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 payload.set_item("task_name", task_name)?;
                 payload.set_item("error", error)?;
                 payload.set_item("retry_count", retry_count)?;
+                payload.set_item("duration_ms", duration_ms(*wall_time_ns))?;
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
 
                 // Call on_timeout middleware if this was a timeout
@@ -146,6 +154,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 queue,
                 error,
                 timed_out,
+                wall_time_ns,
             } => {
                 // Emit JOB_DEAD event
                 let events_mod = py.import("taskito.events")?;
@@ -154,6 +163,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 payload.set_item("job_id", job_id)?;
                 payload.set_item("task_name", task_name)?;
                 payload.set_item("error", error)?;
+                payload.set_item("duration_ms", duration_ms(*wall_time_ns))?;
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
 
                 // Call on_timeout middleware if this was a timeout
@@ -179,6 +189,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 job_id,
                 task_name,
                 queue,
+                wall_time_ns,
             } => {
                 // Emit JOB_CANCELLED event
                 let events_mod = py.import("taskito.events")?;
@@ -186,6 +197,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 let payload = PyDict::new(py);
                 payload.set_item("job_id", job_id)?;
                 payload.set_item("task_name", task_name)?;
+                payload.set_item("duration_ms", duration_ms(*wall_time_ns))?;
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
 
                 // Call on_cancel middleware
