@@ -45,10 +45,16 @@ class GateConfig:
     """Seconds until auto-resolve. ``None`` waits indefinitely."""
 
     on_timeout: GateAction = GateAction.REJECT
-    """Action on timeout."""
+    """Action on timeout. A wire string is accepted and coerced."""
 
     message: str | Callable | None = None
     """Human-readable message shown to approvers."""
+
+    def __post_init__(self) -> None:
+        # The timeout handler dispatches on enum identity, and this dataclass is
+        # public: a caller passing the pre-enum "approve" string would otherwise
+        # have the gate silently resolve as a rejection.
+        self.on_timeout = coerce_enum(GateAction, self.on_timeout, param="on_timeout")
 
 
 class _InheritCompensator:

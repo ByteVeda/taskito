@@ -301,7 +301,8 @@ class QueueDecoratorMixin:
             ``.apply_async(args=..., kwargs=..., ...)`` for enqueueing.
 
         Raises:
-            ValueError: ``on_false`` is not a :class:`PredicateAction` value, or
+            ValueError: ``on_false`` is neither a :class:`PredicateAction` nor one
+                of its wire strings (``"defer"``/``"cancel"``), or
                 ``default_defer_seconds`` is negative.
         """
         on_false_action = coerce_enum(PredicateAction, on_false, param="on_false")

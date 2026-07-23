@@ -39,7 +39,7 @@ Decorator to register a resource factory initialized at worker startup.
 | `health_check_interval` | `float` | `0.0` | Seconds between health checks (0 = disabled). |
 | `max_recreation_attempts` | `int` | `3` | Max times to recreate on health failure. |
 | `scope` | `ResourceScope \| str` | `WORKER` | Lifetime: `WORKER`, `THREAD`, `TASK` (fresh per task), or `POOLED` (pool checkout). |
-| `pool_size` | `int \| None` | `None` | Pool capacity; `POOLED` scope only (default = worker thread count). |
+| `pool_size` | `int \| None` | `None` | Pool capacity; `POOLED` scope only (defaults to 4). |
 | `pool_min` | `int` | `0` | Pre-warmed instances; `POOLED` scope only. |
 | `acquire_timeout` | `float` | `10.0` | Max seconds to wait for a pool instance. |
 | `max_lifetime` | `float` | `3600.0` | Max seconds a pooled instance can live. |

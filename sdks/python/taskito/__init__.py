@@ -46,7 +46,7 @@ from taskito.log_config import configure as configure_logging
 from taskito.mesh import MeshWorker
 from taskito.middleware import TaskMiddleware
 from taskito.mixins.periodic import PeriodicInfo
-from taskito.mixins.pubsub import TopicMessage
+from taskito.mixins.pubsub import ConsumerErrorAction, TopicMessage
 from taskito.notes import MAX_NOTE_FIELDS
 from taskito.predicates.outcomes import PredicateAction
 from taskito.proxies.built_in import BuiltInProxy
@@ -78,6 +78,7 @@ __all__ = [
     "CircularDependencyError",
     "CloudpickleSerializer",
     "CodecSerializer",
+    "ConsumerErrorAction",
     "CryptoError",
     "EffectiveRetention",
     "EncryptedSerializer",

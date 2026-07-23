@@ -27,10 +27,14 @@ def test_wire_values_are_the_cross_sdk_contract() -> None:
 def test_interception_accepts_enum_and_string(tmp_path: Path) -> None:
     enum_queue = Queue(db_path=str(tmp_path / "a.db"), interception=InterceptionMode.LENIENT)
     string_queue = Queue(db_path=str(tmp_path / "b.db"), interception="lenient")
-    assert enum_queue._interceptor is not None
-    assert enum_queue._interceptor.mode is InterceptionMode.LENIENT
-    assert string_queue._interceptor is not None
-    assert string_queue._interceptor.mode is InterceptionMode.LENIENT
+    try:
+        assert enum_queue._interceptor is not None
+        assert enum_queue._interceptor.mode is InterceptionMode.LENIENT
+        assert string_queue._interceptor is not None
+        assert string_queue._interceptor.mode is InterceptionMode.LENIENT
+    finally:
+        enum_queue.close()
+        string_queue.close()
 
 
 def test_interception_typo_raises_naming_the_valid_set(tmp_path: Path) -> None:

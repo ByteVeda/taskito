@@ -398,6 +398,8 @@ class AuthStore:
             data = json.loads(raw)
         except json.JSONDecodeError:
             return None
+        if not isinstance(data, dict):
+            return None
         try:
             session = Session(token=token, **{**data, "role": _role_or_viewer(data.get("role"))})
         except TypeError:
