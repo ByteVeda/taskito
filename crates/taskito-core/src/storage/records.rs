@@ -117,9 +117,8 @@ pub struct Subscription {
     pub max_retries: Option<i32>,
     /// Per-delivery timeout in milliseconds. `None` = queue default.
     pub timeout_ms: Option<i64>,
-    /// Delivery mode: `"fanout"` (one job per publish, the default) or `"log"`
-    /// (append one `topic_messages` row per publish; consumer pulls via cursor).
-    pub mode: String,
+    /// How this subscription is delivered to.
+    pub mode: SubscriptionMode,
     /// Log-mode read cursor: the last-acked message id. `None` = unread (start
     /// from the beginning). Ignored for fan-out subscriptions.
     pub cursor: Option<String>,
@@ -150,15 +149,106 @@ pub struct NewSubscription {
     pub max_retries: Option<i32>,
     /// Per-delivery timeout in milliseconds. `None` = queue default.
     pub timeout_ms: Option<i64>,
-    /// Delivery mode: `"fanout"` (default) or `"log"`. See [`Subscription::mode`].
-    pub mode: String,
+    /// How this subscription is delivered to. See [`Subscription::mode`].
+    pub mode: SubscriptionMode,
 }
 
-/// Delivery mode marker for the `mode` column. `"log"` opts a subscription into
-/// the append-once + cursor model; anything else is treated as fan-out.
-pub const SUBSCRIPTION_MODE_LOG: &str = "log";
-/// Default fan-out delivery mode (one job per publish).
-pub const SUBSCRIPTION_MODE_FANOUT: &str = "fanout";
+/// Lifecycle state a worker reports for itself. Stored as its lowercase wire
+/// form in the `workers.status` column, so the persisted values are unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkerStatus {
+    /// Registered and consuming — the state every worker starts in.
+    #[default]
+    Active,
+    /// Shutting down: finishing in-flight jobs, claiming no new ones.
+    Draining,
+}
+
+impl WorkerStatus {
+    /// The wire form persisted in the `status` column.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkerStatus::Active => "active",
+            WorkerStatus::Draining => "draining",
+        }
+    }
+
+    /// Parse a persisted `status`; anything unrecognized reads as active, the
+    /// value every backend writes at registration. Use [`Self::parse`] for caller
+    /// input, where a typo must not pass silently.
+    pub fn from_wire(wire: &str) -> Self {
+        match wire {
+            "draining" => WorkerStatus::Draining,
+            _ => WorkerStatus::Active,
+        }
+    }
+
+    /// Strictly parse caller-supplied input; `None` for anything outside the set.
+    pub fn parse(wire: &str) -> Option<Self> {
+        match wire {
+            "active" => Some(WorkerStatus::Active),
+            "draining" => Some(WorkerStatus::Draining),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkerStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// How a topic delivers to a subscription. Stored as its lowercase wire form in
+/// the `mode` column, so the persisted values are unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SubscriptionMode {
+    /// One delivery job per publish, per subscription — the default.
+    #[default]
+    Fanout,
+    /// Append one `topic_messages` row per publish; consumers pull via cursor.
+    Log,
+}
+
+impl SubscriptionMode {
+    /// The wire form persisted in the `mode` column.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SubscriptionMode::Fanout => "fanout",
+            SubscriptionMode::Log => "log",
+        }
+    }
+
+    /// Parse a persisted `mode`. Anything unrecognized reads as fan-out, which is
+    /// what the column's pre-enum readers did with a value that wasn't `"log"`.
+    /// Use [`Self::parse`] for caller input, where a typo must not pass silently.
+    pub fn from_wire(wire: &str) -> Self {
+        match wire {
+            "log" => SubscriptionMode::Log,
+            _ => SubscriptionMode::Fanout,
+        }
+    }
+
+    /// Strictly parse caller-supplied input; `None` for anything outside the set.
+    pub fn parse(wire: &str) -> Option<Self> {
+        match wire {
+            "fanout" => Some(SubscriptionMode::Fanout),
+            "log" => Some(SubscriptionMode::Log),
+            _ => None,
+        }
+    }
+
+    /// Whether this mode is the append-once + cursor model.
+    pub fn is_log(&self) -> bool {
+        matches!(self, SubscriptionMode::Log)
+    }
+}
+
+impl std::fmt::Display for SubscriptionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// One durable message in a log topic. Unlike fan-out delivery (one `jobs` row
 /// per subscriber), a log publish writes exactly one of these and each log
@@ -189,9 +279,9 @@ pub struct TopicMessage {
 pub struct Topic {
     /// Topic name (primary key).
     pub name: String,
-    /// Delivery mode: `"log"` (the only declarable mode today) opts publishes
-    /// into the append-once store even without a subscriber.
-    pub mode: String,
+    /// Delivery mode: [`SubscriptionMode::Log`] (the only declarable mode today)
+    /// opts publishes into the append-once store even without a subscriber.
+    pub mode: SubscriptionMode,
     /// Retention window in milliseconds; `None` = keep until consumed/compacted.
     /// A published log row gets `expires_at = now + retention_ms` when the topic
     /// has no live log subscriber, so the retention sweep can reclaim it.
@@ -203,7 +293,7 @@ pub struct Topic {
 impl Topic {
     /// Whether this is a log topic (publishes are retained without a subscriber).
     pub fn is_log(&self) -> bool {
-        self.mode == SUBSCRIPTION_MODE_LOG
+        self.mode.is_log()
     }
 }
 
@@ -367,4 +457,39 @@ pub struct LockInfo {
     pub acquired_at: i64,
     /// Unix-millisecond time the lock expires.
     pub expires_at: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SubscriptionMode, WorkerStatus};
+
+    #[test]
+    fn subscription_mode_round_trips_its_stored_form() {
+        for mode in [SubscriptionMode::Fanout, SubscriptionMode::Log] {
+            assert_eq!(SubscriptionMode::from_wire(mode.as_str()), mode);
+        }
+        assert_eq!(SubscriptionMode::Fanout.as_str(), "fanout");
+        assert_eq!(SubscriptionMode::Log.as_str(), "log");
+        assert!(SubscriptionMode::Log.is_log());
+    }
+
+    #[test]
+    fn worker_status_round_trips_its_stored_form() {
+        for status in [WorkerStatus::Active, WorkerStatus::Draining] {
+            assert_eq!(WorkerStatus::from_wire(status.as_str()), status);
+        }
+        assert_eq!(WorkerStatus::Active.as_str(), "active");
+        assert_eq!(WorkerStatus::Draining.as_str(), "draining");
+    }
+
+    #[test]
+    fn unrecognized_stored_values_read_as_the_default() {
+        // Rows predate the enums, so a value neither wrote must not panic or
+        // silently promote — it reads as what the old string compares implied.
+        assert_eq!(
+            SubscriptionMode::from_wire("broadcast"),
+            SubscriptionMode::Fanout
+        );
+        assert_eq!(WorkerStatus::from_wire("paused"), WorkerStatus::Active);
+    }
 }

@@ -10,6 +10,7 @@ Three layers of argument handling before serialization:
 
 from taskito.interception.errors import ArgumentFailure, InterceptionError
 from taskito.interception.interceptor import ArgumentInterceptor, InterceptionReport
+from taskito.interception.mode import InterceptionMode
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.interception.registry import TypeRegistry
 from taskito.interception.strategy import Strategy
@@ -18,6 +19,7 @@ __all__ = [
     "ArgumentFailure",
     "ArgumentInterceptor",
     "InterceptionError",
+    "InterceptionMode",
     "InterceptionReport",
     "Strategy",
     "TypeRegistry",

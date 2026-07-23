@@ -8,6 +8,7 @@
 //! when all tests share a single storage instance.
 
 use taskito_core::job::{now_millis, JobCompletion, JobStatus, NewJob};
+use taskito_core::storage::records::{SubscriptionMode, WorkerStatus};
 use taskito_core::storage::{DeadJob, Storage};
 use taskito_core::SqliteStorage;
 
@@ -456,7 +457,8 @@ fn test_workers(s: &impl Storage) {
     assert!(w.started_at.is_some());
 
     // Test update_worker_status
-    s.update_worker_status("w-test-1", "draining").unwrap();
+    s.update_worker_status("w-test-1", WorkerStatus::Draining)
+        .unwrap();
     let workers = s.list_workers().unwrap();
     let w = workers.iter().find(|w| w.worker_id == "w-test-1").unwrap();
     assert_eq!(w.status, "draining");
@@ -1057,7 +1059,7 @@ fn test_topic_subscriptions_crud(s: &impl Storage) {
         priority: None,
         max_retries: None,
         timeout_ms: None,
-        mode: "fanout".to_string(),
+        mode: SubscriptionMode::Fanout,
     };
 
     // Upsert idempotency: re-registering (topic, name) updates in place.
@@ -1231,7 +1233,7 @@ fn test_topic_backlog_stats(s: &impl Storage) {
         priority: None,
         max_retries: None,
         timeout_ms: None,
-        mode: "fanout".to_string(),
+        mode: SubscriptionMode::Fanout,
     };
     s.register_subscription(&sub("tbs-email", "tbs_send"))
         .unwrap();
@@ -1305,7 +1307,7 @@ fn log_sub(topic: &str, name: &str) -> taskito_core::NewSubscription {
         priority: None,
         max_retries: None,
         timeout_ms: None,
-        mode: "log".to_string(),
+        mode: SubscriptionMode::Log,
     }
 }
 
@@ -1351,7 +1353,7 @@ fn test_topic_log_messages(s: &impl Storage) {
     // A fan-out subscription on the same topic can neither read the log nor
     // advance a cursor — the log is for log subscriptions only.
     let mut fan = log_sub(topic, "fan");
-    fan.mode = "fanout".to_string();
+    fan.mode = SubscriptionMode::Fanout;
     fan.task_name = "deliver".to_string();
     s.register_subscription(&fan).unwrap();
     assert!(s.read_topic_messages(topic, "fan", 10).unwrap().is_empty());
@@ -1368,7 +1370,8 @@ fn test_topic_registry(s: &impl Storage) {
     assert!(s.get_topic("treg-a").unwrap().is_none());
 
     // Declare with a retention window; get_topic round-trips every field.
-    s.declare_topic("treg-a", "log", Some(1500)).unwrap();
+    s.declare_topic("treg-a", SubscriptionMode::Log, Some(1500))
+        .unwrap();
     let a = s.get_topic("treg-a").unwrap().expect("declared topic");
     assert_eq!(a.name, "treg-a");
     assert!(a.is_log());
@@ -1376,13 +1379,15 @@ fn test_topic_registry(s: &impl Storage) {
     let created = a.created_at;
 
     // Re-declaring is idempotent: retention updates, created_at is preserved.
-    s.declare_topic("treg-a", "log", Some(3000)).unwrap();
+    s.declare_topic("treg-a", SubscriptionMode::Log, Some(3000))
+        .unwrap();
     let a2 = s.get_topic("treg-a").unwrap().unwrap();
     assert_eq!(a2.retention_ms, Some(3000));
     assert_eq!(a2.created_at, created);
 
     // A topic can be declared with no retention (unbounded backlog).
-    s.declare_topic("treg-b", "log", None).unwrap();
+    s.declare_topic("treg-b", SubscriptionMode::Log, None)
+        .unwrap();
     assert_eq!(s.get_topic("treg-b").unwrap().unwrap().retention_ms, None);
 
     // Both declarations appear in the registry listing.

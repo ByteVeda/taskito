@@ -1,10 +1,19 @@
-/** Lifetime of a registered resource. */
-export type ResourceScope = "worker" | "task" | "pooled";
+/**
+ * Lifetime of a registered resource. Names and wire forms are shared across SDKs.
+ *
+ * `"thread"` has no Node equivalent — a worker runs its tasks on one event loop,
+ * so there is no per-thread identity to key an instance on.
+ */
+export type ResourceScope = "worker" | "task" | "pooled" | "request";
+
+/** Every resource scope, for runtime validation. */
+export const RESOURCE_SCOPES: readonly ResourceScope[] = ["worker", "task", "pooled", "request"];
 
 /**
  * Passed to a resource factory so it can depend on other resources. Worker- and
  * pooled-scoped factories may only depend on worker-scoped resources (their
- * instances outlive any single task); a task-scoped factory may depend on any.
+ * instances outlive any single task); task- and request-scoped factories may
+ * depend on any.
  */
 export interface ResourceContext {
   /** Scope of the resource currently being built. */

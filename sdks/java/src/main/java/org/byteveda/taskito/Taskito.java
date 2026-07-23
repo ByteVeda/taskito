@@ -24,6 +24,7 @@ import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.model.EffectiveRetention;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
@@ -35,6 +36,7 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskLogLevel;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
@@ -61,6 +63,7 @@ import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.Workflow;
 import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowState;
 import org.byteveda.taskito.workflows.WorkflowStatus;
 
 /**
@@ -146,12 +149,21 @@ public interface Taskito extends AutoCloseable {
     Taskito codel(String queue, long targetMs, long intervalMs);
 
     /**
-     * Set a queue's same-priority dispatch order. {@code "lifo"} runs
-     * newest-first under overload (a freshness lever); {@code "fifo"} (default)
-     * is the fair oldest-first ordering. Priority always dominates. Honored on
+     * Set a queue's same-priority dispatch order. {@link DispatchOrder#LIFO} runs
+     * newest-first under overload (a freshness lever); {@link DispatchOrder#FIFO}
+     * (default) is the fair oldest-first ordering. Priority always dominates. Honored on
      * SQLite/Postgres; the Redis backend is FIFO-only. Takes effect for workers
      * started after this call. Returns {@code this}.
      */
+    Taskito dispatchOrder(String queue, DispatchOrder order);
+
+    /**
+     * Set a queue's dispatch order from its wire form ({@code "fifo"}/{@code "lifo"}).
+     *
+     * @deprecated use {@link #dispatchOrder(String, DispatchOrder)}, which rejects a typo
+     *     at compile time.
+     */
+    @Deprecated
     Taskito dispatchOrder(String queue, String order);
 
     // ── Producer ────────────────────────────────────────────────────
@@ -331,8 +343,24 @@ public interface Taskito extends AutoCloseable {
 
     // ── Logs ────────────────────────────────────────────────────────
 
+    void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message);
+
+    void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message, String extra);
+
+    /**
+     * Write a task log at a wire-form level.
+     *
+     * @deprecated use {@link #writeTaskLog(String, String, TaskLogLevel, String)}.
+     */
+    @Deprecated
     void writeTaskLog(String jobId, String taskName, String level, String message);
 
+    /**
+     * Write a task log at a wire-form level, with an extra JSON blob.
+     *
+     * @deprecated use {@link #writeTaskLog(String, String, TaskLogLevel, String, String)}.
+     */
+    @Deprecated
     void writeTaskLog(String jobId, String taskName, String level, String message, String extra);
 
     List<TaskLog> getTaskLogs(String jobId);
@@ -340,7 +368,13 @@ public interface Taskito extends AutoCloseable {
     /** Logs for a job with id after {@code afterId} (UUIDv7-ordered cursor); null = all. */
     List<TaskLog> getTaskLogsAfter(String jobId, String afterId);
 
-    /** Logs across jobs filtered by task/level, at or after {@code sinceMs}, capped at {@code limit}. */
+    /**
+     * Logs across jobs filtered by task/level, at or after {@code sinceMs}, capped at
+     * {@code limit}. {@code level} is the wire form ({@link TaskLogLevel#wire()}), not the
+     * enum: a filter is open by nature — {@code null} means no filter, and an unrecognized
+     * value must return nothing rather than throw, since it typically arrives from a query
+     * string.
+     */
     List<TaskLog> queryTaskLogs(String taskName, String level, long sinceMs, long limit);
 
     // ── Locks ───────────────────────────────────────────────────────
@@ -550,7 +584,12 @@ public interface Taskito extends AutoCloseable {
     /** Cancel a workflow run: skip its pending nodes and mark it cancelled. */
     void cancelWorkflow(String runId);
 
-    /** Workflow run summaries, filtered by definition name and/or state, paged. Nulls mean no filter. */
+    /**
+     * Workflow run summaries, filtered by definition name and/or state, paged. Nulls mean no
+     * filter. {@code state} is the wire form ({@link WorkflowState#wire()}) rather than the enum,
+     * so that a bare {@code null} filter stays unambiguous; unlike the log level, an
+     * unrecognized state is rejected by the core.
+     */
     List<WorkflowRunInfo> listWorkflowRuns(String definitionName, String state, long limit, long offset);
 
     /** A single workflow run summary, or empty if the run no longer exists. */

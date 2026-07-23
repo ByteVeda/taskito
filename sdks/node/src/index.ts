@@ -12,6 +12,8 @@ export {
   type OAuthProvider,
   oauthConfigFromEnv,
   type ProviderIdentity,
+  ROLES,
+  type Role,
   serveDashboard,
 } from "./dashboard";
 export {
@@ -55,6 +57,7 @@ export {
   mockResource,
   type PoolOptions,
   type PoolStats,
+  RESOURCE_SCOPES,
   type ResourceContext,
   type ResourceDefinition,
   type ResourceMetrics,
@@ -84,6 +87,7 @@ export type {
   CursorJobFilter,
   DeadJob,
   DetailedJobFilter,
+  DispatchOrder,
   EffectiveRetention,
   EnqueueOptions,
   Job,
@@ -105,11 +109,13 @@ export type {
   Subscription,
   TaskHandler,
   TaskLog,
+  TaskLogLevel,
   TaskMap,
   TaskOptions,
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
+export { DISPATCH_ORDERS, TASK_LOG_LEVELS } from "./types";
 export {
   createLogger,
   type Logger,

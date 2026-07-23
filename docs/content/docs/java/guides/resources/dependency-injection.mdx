@@ -40,6 +40,11 @@ A resource's `ResourceScope` decides its lifetime:
 | `REQUEST` | Fresh on every `use()` | Disposed with the task; never cached | Values that must not be shared even within one job |
 | `POOLED` | Lazily, up to `poolSize` at once | Checked out per task, returned at task end | Expensive clients that must stay bounded but be reused |
 
+Scope names and their meanings are shared across SDKs. Two are platform-bound:
+`THREAD` has no Node equivalent (a Node worker runs its tasks on one event loop),
+and `REQUEST` has no Python equivalent (Python resources arrive by injection,
+resolved once per task, so there is no second resolve to build for).
+
 ```java
 queue.resource("tx", ResourceScope.TASK,
         ctx -> beginTransaction(),

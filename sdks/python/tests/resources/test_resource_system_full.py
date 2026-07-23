@@ -199,10 +199,12 @@ class TestNoProxy:
 
 class TestResourceScopes:
     def test_all_scopes_exist(self) -> None:
+        """Names and wire forms are the cross-SDK contract."""
         assert ResourceScope.WORKER.value == "worker"
-        assert ResourceScope.TASK.value == "task"
         assert ResourceScope.THREAD.value == "thread"
-        assert ResourceScope.REQUEST.value == "request"
+        assert ResourceScope.TASK.value == "task"
+        assert ResourceScope.POOLED.value == "pooled"
+        assert [s.value for s in ResourceScope] == ["worker", "thread", "task", "pooled"]
 
     def test_pool_config(self) -> None:
         cfg = PoolConfig(pool_size=5, pool_min=2)
@@ -386,7 +388,7 @@ class TestRuntimeScopeAware:
         defn = ResourceDefinition(
             name="req",
             factory=factory,
-            scope=ResourceScope.REQUEST,
+            scope=ResourceScope.TASK,
         )
         rt = ResourceRuntime({"req": defn})
         rt.initialize()
@@ -452,7 +454,7 @@ class TestRuntimeScopeAware:
         defn = ResourceDefinition(
             name="db",
             factory=lambda: {},
-            scope=ResourceScope.TASK,
+            scope=ResourceScope.POOLED,
             pool_size=5,
         )
         rt = ResourceRuntime({"db": defn})
@@ -673,3 +675,72 @@ class TestResourceInjectionE2E:
             process.delay(1)
 
         assert results[0].return_value == "1:injected"
+
+
+class TestScopeCoercionAndReload:
+    """Regressions from the scope rename (#503, split 6)."""
+
+    def test_wire_string_scope_is_coerced_to_the_enum(self) -> None:
+        """The runtime dispatches on enum identity — a raw string would match no branch."""
+        defn = ResourceDefinition(name="db", factory=lambda: {}, scope="thread")  # type: ignore[arg-type]
+        assert defn.scope is ResourceScope.THREAD
+
+    def test_unknown_scope_raises_naming_the_valid_set(self) -> None:
+        with pytest.raises(ValueError, match="'worker', 'thread', 'task', 'pooled'"):
+            ResourceDefinition(name="db", factory=lambda: {}, scope="request")  # type: ignore[arg-type]
+
+    def test_pool_settings_on_a_non_pooled_scope_raise(self) -> None:
+        """Catches the one case the TASK/POOLED swap could otherwise pass over quietly."""
+        with pytest.raises(ValueError, match="pool_size/pool_min require"):
+            ResourceDefinition(
+                name="db", factory=lambda: {}, scope=ResourceScope.TASK, pool_size=4
+            )
+
+    def test_reloading_a_pooled_resource_rebuilds_its_pool(self) -> None:
+        """recreate() used to add a singleton and leave task injection on the stale pool."""
+        builds: list[int] = []
+
+        def factory() -> dict:
+            builds.append(1)
+            return {"n": len(builds)}
+
+        defn = ResourceDefinition(
+            name="conn", factory=factory, scope=ResourceScope.POOLED, pool_size=2, reloadable=True
+        )
+        runtime = ResourceRuntime({"conn": defn})
+        runtime.initialize()
+        try:
+            first, release = runtime.acquire_for_task("conn")
+            assert release is not None
+            release()
+
+            assert runtime.reload() == {"conn": True}
+            second, release2 = runtime.acquire_for_task("conn")
+            assert release2 is not None
+            release2()
+            # A rebuilt pool hands out a new instance, and nothing leaked into the
+            # singleton map that resolve() would have returned instead.
+            assert second is not first
+            assert "conn" not in runtime._instances
+        finally:
+            runtime.teardown()
+
+    def test_async_task_teardown_is_awaited(self) -> None:
+        """A returned coroutine used to be dropped, so async teardowns never ran."""
+        torn: list[str] = []
+
+        async def teardown(instance: str) -> None:
+            torn.append(instance)
+
+        defn = ResourceDefinition(
+            name="ctx", factory=lambda: "value", teardown=teardown, scope=ResourceScope.TASK
+        )
+        runtime = ResourceRuntime({"ctx": defn})
+        runtime.initialize()
+        try:
+            _, release = runtime.acquire_for_task("ctx")
+            assert release is not None
+            release()
+            assert torn == ["value"]
+        finally:
+            runtime.teardown()

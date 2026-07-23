@@ -1,6 +1,10 @@
 package org.byteveda.taskito.resources;
 
-/** Lifetime of a worker resource. */
+/**
+ * Lifetime of a worker resource. Names and wire forms are shared across SDKs; two are
+ * platform-bound — {@link #THREAD} has no Node equivalent (one event loop, so no per-thread
+ * identity) and {@link #REQUEST} has no Python equivalent (resources are injected once per task).
+ */
 public enum ResourceScope {
     /** Built once, lazily, and shared across every task on the worker. */
     WORKER,

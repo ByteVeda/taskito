@@ -35,6 +35,7 @@ import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.model.EffectiveRetention;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
@@ -46,6 +47,7 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskLogLevel;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
@@ -218,12 +220,23 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
+    public Taskito dispatchOrder(String queue, DispatchOrder order) {
+        if (order == null) {
+            throw new IllegalArgumentException("order must not be null");
+        }
+        dispatchOrders.put(queue, order.wire());
+        return this;
+    }
+
+    @Override
+    @Deprecated
     public Taskito dispatchOrder(String queue, String order) {
+        // Keeps throwing IllegalArgumentException rather than the model enum's
+        // SerializationException: callers of this overload predate the enum.
         if (!"fifo".equals(order) && !"lifo".equals(order)) {
             throw new IllegalArgumentException("order must be 'fifo' or 'lifo'");
         }
-        dispatchOrders.put(queue, order);
-        return this;
+        return dispatchOrder(queue, DispatchOrder.fromWire(order));
     }
 
     /**
@@ -701,13 +714,28 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     // ── Logs ────────────────────────────────────────────────────────
 
     @Override
-    public void writeTaskLog(String jobId, String taskName, String level, String message) {
-        backend.writeTaskLog(jobId, taskName, level, message, null);
+    public void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message) {
+        writeTaskLog(jobId, taskName, level, message, null);
     }
 
     @Override
+    public void writeTaskLog(String jobId, String taskName, TaskLogLevel level, String message, String extra) {
+        if (level == null) {
+            throw new IllegalArgumentException("level must not be null");
+        }
+        backend.writeTaskLog(jobId, taskName, level.wire(), message, extra);
+    }
+
+    @Override
+    @Deprecated
+    public void writeTaskLog(String jobId, String taskName, String level, String message) {
+        writeTaskLog(jobId, taskName, TaskLogLevel.fromWire(level), message);
+    }
+
+    @Override
+    @Deprecated
     public void writeTaskLog(String jobId, String taskName, String level, String message, String extra) {
-        backend.writeTaskLog(jobId, taskName, level, message, extra);
+        writeTaskLog(jobId, taskName, TaskLogLevel.fromWire(level), message, extra);
     }
 
     @Override

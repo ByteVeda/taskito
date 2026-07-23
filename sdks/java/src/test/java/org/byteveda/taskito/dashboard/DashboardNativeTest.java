@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.Map;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.TaskLogLevel;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.junit.jupiter.api.Test;
@@ -39,7 +40,7 @@ class DashboardNativeTest {
                         Taskito.builder().sqlite(dir.resolve("t.db").toString()).open();
                 DashboardServer server = DashboardServer.start(queue, 0)) {
             String jobId = seedJob(queue);
-            queue.writeTaskLog(jobId, "email.send", "info", "hello-log");
+            queue.writeTaskLog(jobId, "email.send", TaskLogLevel.INFO, "hello-log");
             DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
             assertTrue(client.get("/api/jobs/" + jobId + "/logs").body().contains("hello-log"));
             assertTrue(client.get("/api/logs").body().contains("hello-log"));

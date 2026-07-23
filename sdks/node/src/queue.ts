@@ -80,6 +80,8 @@ import type {
   SubscriberOptions,
   Subscription,
   TaskLog,
+  TaskLogLevel,
+  TaskLogLevelFilter,
   TaskMap,
   TaskOptions,
   TopicLogStat,
@@ -1023,7 +1025,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    * `sinceMs` is a Unix-ms lower bound (default: the last hour).
    */
   queryLogs(
-    options: { task?: string; level?: string; sinceMs?: number; limit?: number } = {},
+    options: { task?: string; level?: TaskLogLevelFilter; sinceMs?: number; limit?: number } = {},
   ): Promise<TaskLog[]> {
     const sinceMs = options.sinceMs ?? Date.now() - 3_600_000;
     return this.native.queryTaskLogs(options.task, options.level, sinceMs, options.limit ?? 100);
@@ -1415,7 +1417,7 @@ interface PendingSubscription {
 }
 
 /** Log level used for published partial results (matches the cross-SDK contract). */
-const STREAM_LEVEL = "result";
+const STREAM_LEVEL: TaskLogLevel = "result";
 /** Job statuses at which a stream stops. */
 const TERMINAL_STATUSES = new Set(["complete", "failed", "dead", "cancelled"]);
 

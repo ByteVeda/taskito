@@ -57,7 +57,7 @@ public final class TokenAuth {
     public static Map<String, Object> openWhoami() {
         Map<String, Object> user = new LinkedHashMap<>();
         user.put("username", "viewer");
-        user.put("role", AuthStore.ROLE_ADMIN);
+        user.put("role", Role.ADMIN.wire());
         user.put("created_at", 0);
         user.put("last_login_at", null);
         Map<String, Object> out = new LinkedHashMap<>();

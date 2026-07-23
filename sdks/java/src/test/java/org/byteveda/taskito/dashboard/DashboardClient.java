@@ -6,6 +6,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.auth.AuthStore;
+import org.byteveda.taskito.dashboard.auth.Role;
 import org.byteveda.taskito.dashboard.auth.Session;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
 
@@ -88,10 +89,10 @@ final class DashboardClient {
     }
 
     static Session seedAdmin(Taskito queue) {
-        return seedUser(queue, "admin", "admin");
+        return seedUser(queue, "admin", Role.ADMIN);
     }
 
-    static Session seedUser(Taskito queue, String username, String role) {
+    static Session seedUser(Taskito queue, String username, Role role) {
         AuthStore store = store(queue);
         store.createUser(username, "password123", role);
         return store.createSession(username, role);

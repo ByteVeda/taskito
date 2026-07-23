@@ -6,7 +6,9 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
+from taskito.enums import coerce_enum
 from taskito.events import EventType
+from taskito.workflows.types import GateAction
 
 if TYPE_CHECKING:
     from taskito.workflows.tracker.tracker import WorkflowTracker
@@ -50,14 +52,16 @@ def enter_gate(tracker: WorkflowTracker, run_id: str, node_name: str, config: _R
         timer.start()
 
 
-def on_gate_timeout(tracker: WorkflowTracker, run_id: str, node_name: str, action: str) -> None:
-    """Handle gate timeout expiry."""
+def on_gate_timeout(
+    tracker: WorkflowTracker, run_id: str, node_name: str, action: GateAction | str
+) -> None:
+    """Handle gate timeout expiry. Coerces in case a caller stored a wire string."""
     with tracker._state_lock:
         # If the run was cleaned up (e.g., cancelled before timeout fired),
         # the timer entry was already removed by `_cleanup_run` — stop.
         if (run_id, node_name) not in tracker._gate_timers:
             return
         tracker._gate_timers.pop((run_id, node_name), None)
-    approved = action == "approve"
+    approved = coerce_enum(GateAction, action, param="on_timeout") is GateAction.APPROVE
     error = None if approved else "gate timeout"
     tracker.resolve_gate(run_id, node_name, approved=approved, error=error)

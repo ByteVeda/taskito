@@ -40,7 +40,11 @@ export const DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60;
 const USERNAME_MAX_LEN = 64;
 const PASSWORD_MIN_LEN = 8;
 const PASSWORD_MAX_LEN = 256;
-const VALID_ROLES = new Set(["admin", "viewer"]);
+/** A dashboard user's access level; the wire form is stored in settings. */
+export type Role = "admin" | "viewer";
+
+/** Every role, for runtime validation. */
+export const ROLES: readonly Role[] = ["admin", "viewer"];
 const USERNAME_RE = /^[\p{L}\p{N}._-]+$/u;
 
 /** Sentinel `password_hash` prefix for OAuth-only users — password login always fails. */
@@ -100,7 +104,7 @@ export function generateSessionToken(): string {
 export interface DashboardUser {
   username: string;
   passwordHash: string;
-  role: string;
+  role: Role;
   createdAt: number;
   lastLoginAt: number | null;
   email: string | null;
@@ -111,7 +115,7 @@ export interface DashboardUser {
 export interface DashboardSession {
   token: string;
   username: string;
-  role: string;
+  role: Role;
   createdAt: number;
   expiresAt: number;
   csrfToken: string;
@@ -148,10 +152,15 @@ function validatePassword(password: string): void {
   }
 }
 
-function validateRole(role: string): void {
-  if (!VALID_ROLES.has(role)) {
-    throw new ValidationError(`role must be one of ${[...VALID_ROLES].sort().join(", ")}`);
+function validateRole(role: string): asserts role is Role {
+  if (!(ROLES as readonly string[]).includes(role)) {
+    throw new ValidationError(`role must be one of ${[...ROLES].sort().join(", ")}`);
   }
+}
+
+/** Read a persisted role, failing closed on anything unrecognized. */
+function roleOrViewer(stored: unknown): Role {
+  return (ROLES as readonly unknown[]).includes(stored) ? (stored as Role) : "viewer";
 }
 
 /**
@@ -163,7 +172,7 @@ export function oauthBootstrapRole(options: {
   email: string | null;
   emailVerified: boolean;
   adminEmails: readonly string[];
-}): string {
+}): Role {
   if (!options.emailVerified || !options.email) {
     return "viewer";
   }
@@ -229,7 +238,11 @@ export class AuthStore {
     return row ? rowToUser(username, row) : undefined;
   }
 
-  async createUser(username: string, password: string, role = "admin"): Promise<DashboardUser> {
+  async createUser(
+    username: string,
+    password: string,
+    role: Role | string = "admin",
+  ): Promise<DashboardUser> {
     validateUsername(username);
     validatePassword(password);
     validateRole(role);
@@ -406,7 +419,7 @@ export class AuthStore {
     const session: DashboardSession = {
       token,
       username: row.username,
-      role: row.role,
+      role: roleOrViewer(row.role),
       createdAt: row.created_at ?? 0,
       expiresAt: row.expires_at,
       csrfToken: row.csrf_token,
@@ -449,7 +462,7 @@ function rowToUser(username: string, row: UserRow): DashboardUser {
   return {
     username,
     passwordHash: row.password_hash,
-    role: row.role,
+    role: roleOrViewer(row.role),
     createdAt: Number(row.created_at) || 0,
     lastLoginAt:
       row.last_login_at === null || row.last_login_at === undefined

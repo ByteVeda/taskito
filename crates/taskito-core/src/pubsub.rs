@@ -7,14 +7,17 @@
 
 use crate::error::{QueueError, Result};
 use crate::job::{now_millis, Job, NewJob};
-use crate::storage::records::{Subscription, SUBSCRIPTION_MODE_LOG};
+use crate::storage::records::{Subscription, SubscriptionMode};
 use crate::storage::Storage;
 
 /// Validate a topic declaration before a backend persists it: only `"log"`
 /// topics are declarable, and a retention window must be non-negative (a
 /// negative one would expire messages immediately or overflow `now + retention`).
-pub(crate) fn validate_topic_declaration(mode: &str, retention_ms: Option<i64>) -> Result<()> {
-    if mode != SUBSCRIPTION_MODE_LOG {
+pub(crate) fn validate_topic_declaration(
+    mode: SubscriptionMode,
+    retention_ms: Option<i64>,
+) -> Result<()> {
+    if !mode.is_log() {
         return Err(QueueError::Config(format!(
             "only \"log\" topics are declarable, got {mode:?}"
         )));
@@ -85,9 +88,7 @@ pub struct PublishRequest {
 /// on the unique index; unkeyed publishes use one batch insert.
 pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Result<Vec<Job>> {
     let subscriptions = storage.list_subscriptions_for_topic(&request.topic)?;
-    let has_log_sub = subscriptions
-        .iter()
-        .any(|s| s.mode == SUBSCRIPTION_MODE_LOG);
+    let has_log_sub = subscriptions.iter().any(|s| s.mode.is_log());
 
     // A log topic stores one durable message that consumers pull via cursor;
     // fan-out subscribers still get one job each. A topic may mix both modes.
@@ -121,7 +122,7 @@ pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Re
 
     let jobs: Vec<NewJob> = subscriptions
         .iter()
-        .filter(|sub| sub.mode != SUBSCRIPTION_MODE_LOG)
+        .filter(|sub| !sub.mode.is_log())
         .map(|sub| delivery_job(request, sub))
         .collect();
     if jobs.is_empty() {
@@ -271,7 +272,7 @@ mod tests {
                 priority,
                 max_retries,
                 timeout_ms,
-                mode: crate::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string(),
+                mode: SubscriptionMode::Fanout,
             })
             .unwrap();
     }
@@ -297,7 +298,7 @@ mod tests {
                 priority: None,
                 max_retries: None,
                 timeout_ms: None,
-                mode: SUBSCRIPTION_MODE_LOG.to_string(),
+                mode: SubscriptionMode::Log,
             })
             .unwrap();
     }
@@ -446,7 +447,7 @@ mod tests {
     fn declared_log_topic_retains_with_zero_subscribers() {
         let storage = SqliteStorage::in_memory().unwrap();
         storage
-            .declare_topic("events", SUBSCRIPTION_MODE_LOG, None)
+            .declare_topic("events", SubscriptionMode::Log, None)
             .unwrap();
 
         // No subscriber at publish time, but the topic is declared → retained.
@@ -478,7 +479,7 @@ mod tests {
     fn declared_topic_retention_sets_message_expiry() {
         let storage = SqliteStorage::in_memory().unwrap();
         storage
-            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(60_000))
+            .declare_topic("events", SubscriptionMode::Log, Some(60_000))
             .unwrap();
         publish_to_topic(&storage, &request("events", None)).unwrap();
 
@@ -494,7 +495,7 @@ mod tests {
         assert!(storage.get_topic("events").unwrap().is_none());
 
         storage
-            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(1000))
+            .declare_topic("events", SubscriptionMode::Log, Some(1000))
             .unwrap();
         let first = storage.get_topic("events").unwrap().unwrap();
         assert_eq!(first.name, "events");
@@ -506,7 +507,7 @@ mod tests {
         // regression that overwrote created_at could still pass this assertion.
         std::thread::sleep(std::time::Duration::from_millis(2));
         storage
-            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(2000))
+            .declare_topic("events", SubscriptionMode::Log, Some(2000))
             .unwrap();
         let second = storage.get_topic("events").unwrap().unwrap();
         assert_eq!(second.retention_ms, Some(2000));
@@ -517,9 +518,11 @@ mod tests {
     #[test]
     fn declare_topic_rejects_bad_mode_and_negative_retention() {
         let storage = SqliteStorage::in_memory().unwrap();
-        assert!(storage.declare_topic("events", "fanout", None).is_err());
         assert!(storage
-            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(-1))
+            .declare_topic("events", SubscriptionMode::Fanout, None)
+            .is_err());
+        assert!(storage
+            .declare_topic("events", SubscriptionMode::Log, Some(-1))
             .is_err());
         // Nothing was persisted on rejection.
         assert!(storage.get_topic("events").unwrap().is_none());

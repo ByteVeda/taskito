@@ -26,8 +26,8 @@ class ResourceRuntime:
     """Manages the lifecycle of scoped resources.
 
     Worker-scoped resources are initialized eagerly in dependency order.
-    Task-scoped resources get a pool. Thread-scoped resources use thread-local storage.
-    Request-scoped resources are created fresh per task.
+    Pooled resources get a checkout pool. Thread-scoped resources use thread-local storage.
+    Task-scoped resources are created fresh per task.
     """
 
     def __init__(self, definitions: dict[str, ResourceDefinition]) -> None:
@@ -51,25 +51,8 @@ class ResourceRuntime:
                 self._create_resource(name)
                 if defn.frozen and name in self._instances:
                     self._instances[name] = FrozenResource(self._instances[name], name)
-            elif defn.scope == ResourceScope.TASK:
-                pool_size = defn.pool_size or 4
-                dep_kwargs = {dep: self._instances[dep] for dep in defn.depends_on}
-                pool = ResourcePool(
-                    name=name,
-                    factory=defn.factory,
-                    teardown=defn.teardown,
-                    config=PoolConfig(
-                        pool_size=pool_size,
-                        pool_min=defn.pool_min,
-                        acquire_timeout=defn.acquire_timeout,
-                        max_lifetime=defn.max_lifetime,
-                        idle_timeout=defn.idle_timeout,
-                    ),
-                    dep_kwargs=dep_kwargs,
-                )
-                if defn.pool_min > 0:
-                    pool.prewarm()
-                self._pools[name] = pool
+            elif defn.scope == ResourceScope.POOLED:
+                self._build_pool(name)
             elif defn.scope == ResourceScope.THREAD:
                 dep_kwargs = {dep: self._instances[dep] for dep in defn.depends_on}
                 store = ThreadLocalStore(
@@ -79,10 +62,39 @@ class ResourceRuntime:
                     dep_kwargs=dep_kwargs,
                 )
                 self._thread_locals[name] = store
-            elif defn.scope == ResourceScope.REQUEST:
-                pass  # created fresh in acquire_for_task
+            elif defn.scope == ResourceScope.TASK:
+                pass  # built fresh per task in acquire_for_task
 
             self._init_duration[name] = time.monotonic() - start
+
+    def _build_pool(self, name: str) -> None:
+        """Build (or rebuild) a pooled resource's checkout pool.
+
+        Replacing the pool object is how a reload swaps it: in-flight checkouts
+        release into the old, shut-down pool, which tears them down instead of
+        handing them out again.
+        """
+        defn = self._definitions[name]
+        previous = self._pools.get(name)
+        dep_kwargs = {dep: self._instances[dep] for dep in defn.depends_on}
+        pool = ResourcePool(
+            name=name,
+            factory=defn.factory,
+            teardown=defn.teardown,
+            config=PoolConfig(
+                pool_size=defn.pool_size or 4,
+                pool_min=defn.pool_min,
+                acquire_timeout=defn.acquire_timeout,
+                max_lifetime=defn.max_lifetime,
+                idle_timeout=defn.idle_timeout,
+            ),
+            dep_kwargs=dep_kwargs,
+        )
+        if defn.pool_min > 0:
+            pool.prewarm()
+        self._pools[name] = pool
+        if previous is not None:
+            previous.shutdown()
 
     def _create_resource(self, name: str) -> None:
         """Invoke a resource factory, injecting its declared dependencies."""
@@ -98,7 +110,7 @@ class ResourceRuntime:
     def resolve(self, name: str) -> Any:
         """Return a live resource instance by name (worker scope only).
 
-        For task/request scopes, use acquire_for_task() instead.
+        For task- and pooled-scoped resources, use acquire_for_task() instead.
 
         Raises:
             ResourceNotFoundError: If the name was never registered.
@@ -117,10 +129,10 @@ class ResourceRuntime:
         if name in self._thread_locals:
             return self._thread_locals[name].get_or_create()
 
-        # Task/request scope shouldn't use resolve() directly
+        # Pooled instances are checked out per task, never resolved as singletons.
         if name in self._pools:
             raise ResourceUnavailableError(
-                f"Resource '{name}' is task-scoped — use acquire_for_task() instead"
+                f"Resource '{name}' is pooled — use acquire_for_task() instead"
             )
 
         raise ResourceNotFoundError(f"Resource '{name}' is not initialized")
@@ -129,9 +141,9 @@ class ResourceRuntime:
         """Acquire a resource for a single task execution.
 
         Returns:
-            (instance, release_callback) where release_callback is None
-            for worker/thread scopes and must be called after task completion
-            for task/request scopes.
+            (instance, release_callback) where release_callback is None for
+            worker/thread scopes and must be called after task completion for
+            task (teardown) and pooled (return to pool) scopes.
         """
         if name not in self._definitions and name not in self._instances:
             raise ResourceNotFoundError(f"Resource '{name}' is not registered")
@@ -147,7 +159,7 @@ class ResourceRuntime:
         if scope == ResourceScope.THREAD:
             return self._thread_locals[name].get_or_create(), None
 
-        if scope == ResourceScope.TASK:
+        if scope == ResourceScope.POOLED:
             pool = self._pools[name]
             instance = pool.acquire()
 
@@ -156,20 +168,20 @@ class ResourceRuntime:
 
             return instance, release
 
-        if scope == ResourceScope.REQUEST:
+        if scope == ResourceScope.TASK:
             deps = defn.depends_on if defn else []
             dep_kwargs = {dep: self._instances.get(dep) for dep in deps}
             instance = defn.factory(**dep_kwargs) if defn else None
             instance = run_maybe_async(instance)
 
-            def teardown_request() -> None:
+            def teardown_task() -> None:
                 if defn and defn.teardown is not None and instance is not None:
                     try:
-                        defn.teardown(instance)
+                        run_maybe_async(defn.teardown(instance))
                     except Exception:
-                        logger.exception("Error tearing down request resource '%s'", name)
+                        logger.exception("Error tearing down task resource '%s'", name)
 
-            return instance, teardown_request
+            return instance, teardown_task
 
         return self._instances.get(name), None
 
@@ -178,6 +190,10 @@ class ResourceRuntime:
         try:
             old = self._instances.get(name)
             defn = self._definitions[name]
+            if defn.scope == ResourceScope.POOLED:
+                self._build_pool(name)
+                self._recreation_count[name] = self._recreation_count.get(name, 0) + 1
+                return True
             if old is not None and defn.teardown is not None:
                 run_maybe_async(defn.teardown(old))
             self._create_resource(name)
@@ -247,7 +263,7 @@ class ResourceRuntime:
                 "recreations": self._recreation_count.get(name, 0),
                 "depends_on": defn.depends_on if defn else [],
             }
-            # Add pool stats for task-scoped resources
+            # Add pool stats for pooled resources
             if name in self._pools:
                 entry["pool"] = self._pools[name].stats()
             result.append(entry)

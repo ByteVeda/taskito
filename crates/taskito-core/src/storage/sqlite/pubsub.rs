@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 
 use super::super::models::*;
-use super::super::records::NewSubscription;
+use super::super::records::{NewSubscription, SubscriptionMode};
 use super::super::schema::{topic_deliveries, topic_messages, topic_subscriptions, topics};
 use super::SqliteStorage;
 use crate::error::Result;
@@ -11,12 +11,17 @@ crate::storage::diesel_common::impl_diesel_pubsub_ops!(SqliteStorage);
 impl SqliteStorage {
     /// Declare a topic (idempotent upsert on `name`). `created_at` is preserved
     /// on re-declaration; only `mode`/`retention_ms` are updated.
-    pub fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+    pub fn declare_topic(
+        &self,
+        name: &str,
+        mode: SubscriptionMode,
+        retention_ms: Option<i64>,
+    ) -> Result<()> {
         crate::pubsub::validate_topic_declaration(mode, retention_ms)?;
         let mut conn = self.conn()?;
         let row = NewTopicRow {
             name,
-            mode,
+            mode: mode.as_str(),
             retention_ms,
             created_at: crate::job::now_millis(),
         };
@@ -52,7 +57,7 @@ impl SqliteStorage {
             priority: sub.priority,
             max_retries: sub.max_retries,
             timeout_ms: sub.timeout_ms,
-            mode: &sub.mode,
+            mode: sub.mode.as_str(),
         };
 
         // `cursor` is omitted so a re-registration preserves a log consumer's

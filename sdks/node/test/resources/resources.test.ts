@@ -11,6 +11,7 @@ import {
 } from "../../src/index";
 import { ResourcePool } from "../../src/resources/pool";
 import { ResourceRuntime } from "../../src/resources/runtime";
+import type { ResourceScope } from "../../src/resources/types";
 
 let worker: Worker | undefined;
 
@@ -279,6 +280,101 @@ describe("ResourcePool", () => {
     await pool.release(b);
     expect(pool.stats().active).toBe(0);
     expect(pool.stats().idle).toBe(2);
+  });
+});
+
+describe("request-scoped resources in the runtime", () => {
+  it("builds a fresh instance per resolve and disposes each with the task", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    const disposed: number[] = [];
+    rt.register("cursor", {
+      scope: "request",
+      factory: () => ({ id: ++builds }),
+      dispose: (value) => {
+        disposed.push((value as { id: number }).id);
+      },
+    });
+    const scope = rt.createTaskScope();
+    const first = await scope.resolver("cursor");
+    const second = await scope.resolver("cursor");
+    // Unlike task scope, a second resolve is not the cached first one.
+    expect(first).not.toBe(second);
+    expect(builds).toBe(2);
+    await scope.teardown();
+    expect(disposed.sort()).toEqual([1, 2]);
+    expect(rt.metrics().cursor).toEqual({ created: 2, disposed: 2, active: 0 });
+  });
+
+  it("caches a task-scoped resource for the whole task, unlike request scope", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("perTask", { scope: "task", factory: () => ({ id: ++builds }) });
+    const scope = rt.createTaskScope();
+    expect(await scope.resolver("perTask")).toBe(await scope.resolver("perTask"));
+    expect(builds).toBe(1);
+    await scope.teardown();
+  });
+});
+
+describe("resource scope validation", () => {
+  it("rejects an unknown scope at registration", () => {
+    const rt = new ResourceRuntime();
+    // TypeScript stops this at compile time; a plain-JS caller would otherwise
+    // land in the task branch and get different lifecycle semantics silently.
+    expect(() =>
+      rt.register("bad", { scope: "per-request" as ResourceScope, factory: () => 1 }),
+    ).toThrow(/unknown scope/);
+  });
+
+  it("rejects a direct request-scope dependency cycle", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "request", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("rejects an indirect request-scope cycle through a task resource", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "request", factory: (ctx) => ctx.use("b") });
+    rt.register("b", { scope: "task", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("rejects the reverse mixed-scope cycle, task through request", async () => {
+    // The task branch would otherwise hand back its own pending promise and the
+    // build would await itself forever.
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "task", factory: (ctx) => ctx.use("b") });
+    rt.register("b", { scope: "request", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("rejects a self-referential task resource", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "task", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("still shares one task instance across sibling dependents", async () => {
+    // A diamond is not a cycle: the chain is per-path, so the cache still serves
+    // the second dependent.
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("shared", { scope: "task", factory: () => ({ n: ++builds }) });
+    rt.register("x", { scope: "task", factory: (ctx) => ctx.use("shared") });
+    rt.register("y", { scope: "task", factory: (ctx) => ctx.use("shared") });
+    const scope = rt.createTaskScope();
+    expect(await scope.resolver("x")).toBe(await scope.resolver("y"));
+    expect(builds).toBe(1);
+    await scope.teardown();
   });
 });
 

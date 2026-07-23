@@ -34,7 +34,7 @@ Queue(
     recipe_signing_key: str | None = None,
     max_reconstruction_timeout: int = 10,
     file_path_allowlist: list[str] | None = None,
-    disabled_proxies: list[str] | None = None,
+    disabled_proxies: Sequence[BuiltInProxy | str] | None = None,
     async_concurrency: int = 100,
     event_workers: int = 4,
     scheduler_poll_interval_ms: int = 50,
@@ -60,7 +60,7 @@ Queue(
 | `recipe_signing_key` | `str \| None` | `None` | HMAC-SHA256 key for proxy recipe integrity. Falls back to `TASKITO_RECIPE_SECRET` env var. |
 | `max_reconstruction_timeout` | `int` | `10` | Max seconds allowed for proxy reconstruction. |
 | `file_path_allowlist` | `list[str] \| None` | `None` | Allowed file path prefixes for the file proxy handler. |
-| `disabled_proxies` | `list[str] \| None` | `None` | Handler names to skip when registering built-in proxy handlers. |
+| `disabled_proxies` | `Sequence[BuiltInProxy \| str] \| None` | `None` | Built-in proxy handlers to skip registering. An unknown id raises rather than silently leaving the handler registered. |
 | `async_concurrency` | `int` | `100` | Maximum number of `async def` tasks running concurrently on the native async executor. |
 | `event_workers` | `int` | `4` | Thread pool size for the event bus. Increase for high event volume. |
 | `scheduler_poll_interval_ms` | `int` | `50` | Milliseconds between scheduler poll cycles. Lower values improve scheduling precision at the cost of CPU. |

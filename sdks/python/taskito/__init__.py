@@ -41,13 +41,15 @@ from taskito.exceptions import (
     TaskTimeoutError,
 )
 from taskito.inject import Inject
-from taskito.interception import InterceptionError, InterceptionReport
+from taskito.interception import InterceptionError, InterceptionMode, InterceptionReport
 from taskito.log_config import configure as configure_logging
 from taskito.mesh import MeshWorker
 from taskito.middleware import TaskMiddleware
 from taskito.mixins.periodic import PeriodicInfo
-from taskito.mixins.pubsub import TopicMessage
+from taskito.mixins.pubsub import ConsumerErrorAction, TopicMessage
 from taskito.notes import MAX_NOTE_FIELDS
+from taskito.predicates.outcomes import PredicateAction
+from taskito.proxies.built_in import BuiltInProxy
 from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
 from taskito.retention import EffectiveRetention, Retention
@@ -70,11 +72,13 @@ __all__ = [
     "BatchItemResult",
     "BatchPartialFailureError",
     "BatchResultTypeError",
+    "BuiltInProxy",
     "CborSerializer",
     "CircuitBreakerOpenError",
     "CircularDependencyError",
     "CloudpickleSerializer",
     "CodecSerializer",
+    "ConsumerErrorAction",
     "CryptoError",
     "EffectiveRetention",
     "EncryptedSerializer",
@@ -83,6 +87,7 @@ __all__ = [
     "HmacCodec",
     "Inject",
     "InterceptionError",
+    "InterceptionMode",
     "InterceptionReport",
     "JobNotFoundError",
     "JobResult",
@@ -96,6 +101,7 @@ __all__ = [
     "NotesValidationError",
     "PayloadCodec",
     "PeriodicInfo",
+    "PredicateAction",
     "PredicateRejectedError",
     "ProxyCleanupError",
     "ProxyReconstructionError",

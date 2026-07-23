@@ -10,9 +10,20 @@ from __future__ import annotations
 from .builder import GateConfig, Workflow, WorkflowProxy
 from .context import WorkflowContext
 from .run import WorkflowRun
-from .types import NodeSnapshot, NodeStatus, WorkflowState, WorkflowStatus
+from .types import (
+    DiagramFormat,
+    FanStrategy,
+    GateAction,
+    NodeSnapshot,
+    NodeStatus,
+    WorkflowState,
+    WorkflowStatus,
+)
 
 __all__ = [
+    "DiagramFormat",
+    "FanStrategy",
+    "GateAction",
     "GateConfig",
     "NodeSnapshot",
     "NodeStatus",

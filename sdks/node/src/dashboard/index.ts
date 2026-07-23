@@ -92,6 +92,8 @@ export {
   type OAuthProvider,
   oauthConfigFromEnv,
   type ProviderIdentity,
+  ROLES,
+  type Role,
 } from "./auth";
 export {
   createDashboardHandler,

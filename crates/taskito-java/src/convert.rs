@@ -309,7 +309,7 @@ impl<'a> From<&'a Topic> for TopicView<'a> {
     fn from(t: &'a Topic) -> Self {
         Self {
             name: &t.name,
-            mode: &t.mode,
+            mode: t.mode.as_str(),
             retention_ms: t.retention_ms,
             created_at: t.created_at,
         }

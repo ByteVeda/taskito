@@ -8,6 +8,7 @@ thread is owned by ``run_worker`` and stopped when the worker drains.
 
 from __future__ import annotations
 
+import enum
 import logging
 import threading
 from collections.abc import Callable
@@ -18,7 +19,18 @@ from taskito.async_support.helpers import run_maybe_async
 if TYPE_CHECKING:
     from taskito.mixins.pubsub import QueuePubSubMixin, TopicMessage
 
+
 logger = logging.getLogger("taskito")
+
+
+class ConsumerErrorAction(str, enum.Enum):
+    """What a managed log consumer does when its handler raises."""
+
+    RETRY = "retry"
+    """Leave the message un-acked so the next poll re-reads the batch."""
+
+    SKIP = "skip"
+    """Ack past the failed message and continue."""
 
 
 class LogConsumerThread(threading.Thread):
@@ -43,7 +55,7 @@ class LogConsumerThread(threading.Thread):
         self._handler: Callable[..., Any] = config["handler"]
         self._poll_interval: float = config["poll_interval"]
         self._batch_size: int = config["batch_size"]
-        self._on_error: str = config["on_error"]
+        self._on_error: ConsumerErrorAction = config["on_error"]
         self._stop_event = stop_event
 
     def run(self) -> None:
@@ -92,7 +104,7 @@ class LogConsumerThread(threading.Thread):
                     self._name,
                     message.id,
                 )
-                if self._on_error == "retry":
+                if self._on_error is ConsumerErrorAction.RETRY:
                     return last_acked, True
             last_acked = message.id
         return last_acked, False

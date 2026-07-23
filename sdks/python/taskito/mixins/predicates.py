@@ -34,7 +34,7 @@ from taskito.predicates.context import PredicateContext
 from taskito.predicates.core import Predicate as _Predicate
 from taskito.predicates.evaluate import evaluate_predicate
 from taskito.predicates.metrics import PredicateMetrics
-from taskito.predicates.outcomes import Cancel, Defer
+from taskito.predicates.outcomes import Cancel, Defer, PredicateAction
 from taskito.predicates.registry import PredicateValidationError
 from taskito.predicates.registry import (
     register_predicate as _register_predicate,
@@ -50,7 +50,7 @@ class QueuePredicateMixin:
 
     _inner: PyQueue
     _task_predicates: dict[str, _Predicate]
-    _task_predicate_on_false: dict[str, str]
+    _task_predicate_on_false: dict[str, PredicateAction]
     _task_predicate_extras: dict[str, dict[str, Any]]
     _task_default_defer: dict[str, float]
     _task_predicate_serialized: dict[str, dict[str, Any] | None]
@@ -192,8 +192,8 @@ class QueuePredicateMixin:
             raise TaskCancelledError(f"predicate deferred job {job_id} by {outcome.seconds:.1f}s")
 
         # Plain False — branch on the task's on_false setting.
-        action = self._task_predicate_on_false.get(task_name, "defer")
-        if action == "cancel":
+        action = self._task_predicate_on_false.get(task_name, PredicateAction.DEFER)
+        if action is PredicateAction.CANCEL:
             self._emit_dispatch_cancel(task_name, job_id, queue_name, None)
             raise TaskCancelledError(f"predicate rejected job {job_id}")
 
@@ -277,8 +277,8 @@ class QueuePredicateMixin:
             raise PredicateRejectedError(task_name, outcome.reason)
 
         # Plain False — branch on the task's on_false setting.
-        action = self._task_predicate_on_false.get(task_name, "defer")
-        if action == "cancel":
+        action = self._task_predicate_on_false.get(task_name, PredicateAction.DEFER)
+        if action is PredicateAction.CANCEL:
             self._emit_enqueue_reject(task_name, queue_name, None)
             raise PredicateRejectedError(task_name)
 

@@ -6,7 +6,7 @@ use napi::bindgen_prelude::{spawn_blocking, Buffer, Result};
 use napi_derive::napi;
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
-use taskito_core::storage::records::NewSubscription;
+use taskito_core::storage::records::{NewSubscription, SubscriptionMode};
 use taskito_core::Storage;
 
 use super::JsQueue;
@@ -45,9 +45,14 @@ impl JsQueue {
                 "an ephemeral subscription (durable=false) requires ownerWorkerId",
             ));
         }
-        let mode = mode.unwrap_or_else(|| {
-            taskito_core::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string()
-        });
+        let mode = match mode {
+            Some(m) => SubscriptionMode::parse(&m).ok_or_else(|| {
+                invalid_arg(format!(
+                    "unknown subscription mode '{m}' (expected 'fanout' or 'log')"
+                ))
+            })?,
+            None => SubscriptionMode::default(),
+        };
         let storage = self.storage.clone();
         spawn_blocking(move || {
             let row = NewSubscription {
@@ -194,10 +199,15 @@ impl JsQueue {
         mode: String,
         retention_ms: Option<i64>,
     ) -> Result<()> {
+        let parsed = SubscriptionMode::parse(&mode).ok_or_else(|| {
+            invalid_arg(format!(
+                "unknown subscription mode '{mode}' (expected 'fanout' or 'log')"
+            ))
+        })?;
         let storage = self.storage.clone();
         spawn_blocking(move || {
             storage
-                .declare_topic(&name, &mode, retention_ms)
+                .declare_topic(&name, parsed, retention_ms)
                 .map_err(to_napi_err)
         })
         .await

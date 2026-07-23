@@ -2,8 +2,18 @@ use pyo3::prelude::*;
 
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
-use taskito_core::storage::records::NewSubscription;
+use taskito_core::storage::records::{NewSubscription, SubscriptionMode};
 use taskito_core::storage::Storage;
+
+/// Strictly parse a caller-supplied subscription mode. Unlike the lenient reader
+/// used for persisted rows, a typo here is a caller error, not a legacy value.
+fn parse_mode(mode: &str) -> PyResult<SubscriptionMode> {
+    SubscriptionMode::parse(mode).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown subscription mode '{mode}' (expected 'fanout' or 'log')"
+        ))
+    })
+}
 
 use super::PyQueue;
 use crate::py_job::PyJob;
@@ -80,7 +90,7 @@ impl PyQueue {
             priority,
             max_retries,
             timeout_ms,
-            mode: mode.to_string(),
+            mode: parse_mode(mode)?,
         };
         self.storage
             .register_subscription(&row)
@@ -272,6 +282,7 @@ impl PyQueue {
         retention_ms: Option<i64>,
     ) -> PyResult<()> {
         let storage = &self.storage;
+        let mode = parse_mode(mode)?;
         py.detach(|| storage.declare_topic(name, mode, retention_ms))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
@@ -283,7 +294,14 @@ impl PyQueue {
             .detach(|| storage.list_declared_topics())
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
             .into_iter()
-            .map(|t| (t.name, t.mode, t.retention_ms, t.created_at))
+            .map(|t| {
+                (
+                    t.name,
+                    t.mode.as_str().to_string(),
+                    t.retention_ms,
+                    t.created_at,
+                )
+            })
             .collect())
     }
 

@@ -2,8 +2,8 @@ use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::records::{
     CircuitBreakerState, JobError, LockInfo, NewPeriodicTask, NewSubscription, PeriodicTask,
-    RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, Topic, TopicLogStats,
-    TopicMessage, WorkerInfo,
+    RateLimitState, ReplayEntry, Subscription, SubscriptionMode, TaskLogEntry, TaskMetric, Topic,
+    TopicLogStats, TopicMessage, WorkerInfo, WorkerStatus,
 };
 use crate::storage::{DeadJob, DispatchOrder, QueueStats, SubscriptionBacklogStats};
 
@@ -295,7 +295,12 @@ pub trait Storage: Send + Sync + Clone {
     /// retained even with no subscriber (removing the late-join boundary).
     /// `mode` must be `"log"` (the only declarable mode) and `retention_ms`, if
     /// set, must be non-negative — backends reject anything else.
-    fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()>;
+    fn declare_topic(
+        &self,
+        name: &str,
+        mode: SubscriptionMode,
+        retention_ms: Option<i64>,
+    ) -> Result<()>;
     /// Fetch a declared topic by name, or `None` if it was never declared.
     fn get_topic(&self, name: &str) -> Result<Option<Topic>>;
     /// List every declared topic in the registry.
@@ -416,8 +421,8 @@ pub trait Storage: Send + Sync + Clone {
     /// Refresh a worker's heartbeat timestamp, optionally updating its
     /// resource-health JSON.
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()>;
-    /// Set a worker's status string.
-    fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()>;
+    /// Set a worker's lifecycle status.
+    fn update_worker_status(&self, worker_id: &str, status: WorkerStatus) -> Result<()>;
     /// Every registered worker with its heartbeat state.
     fn list_workers(&self) -> Result<Vec<WorkerInfo>>;
     /// Ids of workers whose heartbeat is at or after `cutoff_ms`. A narrow

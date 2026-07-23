@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from taskito._taskito import PyWorkflowBuilder
+from taskito.enums import coerce_enum
 
 from . import analysis as _analysis
+from .types import DiagramFormat, FanStrategy, GateAction
 from .visualization import nodes_and_edges_from_steps, render_dot, render_mermaid
 
 if TYPE_CHECKING:
@@ -31,8 +33,6 @@ class HasTaskName(Protocol):
     def _task_name(self) -> str: ...
 
 
-_VALID_FAN_OUT = frozenset({"each"})
-_VALID_FAN_IN = frozenset({"all"})
 _VALID_CONDITIONS = frozenset({"on_success", "on_failure", "always"})
 _VALID_ON_FAILURE = frozenset({"fail_fast", "continue"})
 
@@ -44,11 +44,17 @@ class GateConfig:
     timeout: float | None = None
     """Seconds until auto-resolve. ``None`` waits indefinitely."""
 
-    on_timeout: str = "reject"
-    """Action on timeout: ``"approve"`` or ``"reject"``."""
+    on_timeout: GateAction = GateAction.REJECT
+    """Action on timeout. A wire string is accepted and coerced."""
 
     message: str | Callable | None = None
     """Human-readable message shown to approvers."""
+
+    def __post_init__(self) -> None:
+        # The timeout handler dispatches on enum identity, and this dataclass is
+        # public: a caller passing the pre-enum "approve" string would otherwise
+        # have the gate silently resolve as a rejection.
+        self.on_timeout = coerce_enum(GateAction, self.on_timeout, param="on_timeout")
 
 
 class _InheritCompensator:
@@ -71,8 +77,8 @@ class _Step:
     max_retries: int | None = None
     timeout_ms: int | None = None
     priority: int | None = None
-    fan_out: str | None = None
-    fan_in: str | None = None
+    fan_out: FanStrategy | None = None
+    fan_in: FanStrategy | None = None
     condition: str | Callable | None = None
     gate_config: GateConfig | None = None
     sub_workflow: SubWorkflowRef | None = None
@@ -137,8 +143,8 @@ class Workflow:
         max_retries: int | None = None,
         timeout_ms: int | None = None,
         priority: int | None = None,
-        fan_out: str | None = None,
-        fan_in: str | None = None,
+        fan_out: FanStrategy | str | None = None,
+        fan_in: FanStrategy | str | None = None,
         condition: str | Callable | None = None,
         compensates: HasTaskName | str | None | _InheritCompensator = INHERIT_COMPENSATOR,
     ) -> Workflow:
@@ -195,16 +201,21 @@ class Workflow:
                 )
 
         if fan_out is not None:
-            if fan_out not in _VALID_FAN_OUT:
-                valid = sorted(_VALID_FAN_OUT)
-                raise ValueError(f"step '{name}': fan_out must be one of {valid}, got '{fan_out}'")
+            fan_out = coerce_enum(FanStrategy, fan_out, param=f"step '{name}': fan_out")
+            if fan_out is not FanStrategy.EACH:
+                raise ValueError(
+                    f"step '{name}': fan_out must be {FanStrategy.EACH.value!r}, "
+                    f"got {fan_out.value!r}"
+                )
             if len(predecessors) != 1:
                 raise ValueError(f"step '{name}': fan_out step must have exactly one predecessor")
 
         if fan_in is not None:
-            if fan_in not in _VALID_FAN_IN:
+            fan_in = coerce_enum(FanStrategy, fan_in, param=f"step '{name}': fan_in")
+            if fan_in is not FanStrategy.ALL:
                 raise ValueError(
-                    f"step '{name}': fan_in must be one of {sorted(_VALID_FAN_IN)}, got '{fan_in}'"
+                    f"step '{name}': fan_in must be {FanStrategy.ALL.value!r}, "
+                    f"got {fan_in.value!r}"
                 )
             if len(predecessors) != 1:
                 raise ValueError(f"step '{name}': fan_in step must have exactly one predecessor")
@@ -275,7 +286,7 @@ class Workflow:
         after: str | list[str] | None = None,
         condition: str | Callable | None = None,
         timeout: float | None = None,
-        on_timeout: str = "reject",
+        on_timeout: GateAction | str = GateAction.REJECT,
         message: str | Callable | None = None,
     ) -> Workflow:
         """Add an approval gate step.
@@ -291,15 +302,14 @@ class Workflow:
             after: Predecessor step name(s).
             condition: Optional condition for entering the gate.
             timeout: Seconds until auto-resolve (``None`` = wait forever).
-            on_timeout: ``"approve"`` or ``"reject"`` when timeout fires.
+            on_timeout: :class:`GateAction` (or its string) when the timeout fires.
             message: Human-readable message for approvers.
         """
         if name in self._steps:
             raise ValueError(f"step '{name}' already defined")
         if "[" in name:
             raise ValueError(f"step '{name}': names must not contain '['")
-        if on_timeout not in ("approve", "reject"):
-            raise ValueError(f"gate '{name}': on_timeout must be 'approve' or 'reject'")
+        timeout_action = coerce_enum(GateAction, on_timeout, param=f"gate '{name}': on_timeout")
 
         if after is None:
             predecessors: list[str] = []
@@ -318,7 +328,7 @@ class Workflow:
             condition=condition,
             gate_config=GateConfig(
                 timeout=timeout,
-                on_timeout=on_timeout,
+                on_timeout=timeout_action,
                 message=message,
             ),
         )
@@ -365,17 +375,18 @@ class Workflow:
         """Identify the bottleneck node on the critical path."""
         return _analysis.bottleneck_analysis(self._steps, costs)
 
-    def visualize(self, fmt: str = "mermaid") -> str:
+    def visualize(self, fmt: DiagramFormat | str = DiagramFormat.MERMAID) -> str:
         """Render the workflow DAG as a diagram string.
 
         Args:
-            fmt: Output format — ``"mermaid"`` or ``"dot"``.
+            fmt: Output format — a :class:`DiagramFormat` or its string. An
+                unknown one raises rather than silently falling back to Mermaid.
 
         Returns:
             The diagram string (no statuses — pre-execution view).
         """
         nodes, edges = nodes_and_edges_from_steps(self._steps)
-        if fmt == "dot":
+        if coerce_enum(DiagramFormat, fmt, param="fmt") is DiagramFormat.DOT:
             return render_dot(nodes, edges)
         return render_mermaid(nodes, edges)
 

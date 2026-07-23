@@ -8,7 +8,9 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from taskito.enums import coerce_enum
 from taskito.interception.errors import InterceptionError
+from taskito.interception.mode import InterceptionMode
 from taskito.interception.registry import TypeRegistry
 from taskito.interception.strategy import Strategy
 from taskito.interception.walker import ArgumentWalker
@@ -49,30 +51,29 @@ class ArgumentInterceptor:
     """Orchestrates argument interception before serialization.
 
     Three modes:
-    - ``"strict"``: REJECT raises immediately, unknown non-serializable types raise.
-    - ``"lenient"``: REJECT logs a warning and drops the argument, unknowns pass through.
-    - ``"off"``: No interception at all — passthrough to serializer.
+    - :attr:`~taskito.interception.InterceptionMode.STRICT`: REJECT raises immediately,
+      unknown non-serializable types raise.
+    - :attr:`~taskito.interception.InterceptionMode.LENIENT`: REJECT logs a warning and
+      drops the argument, unknowns pass through.
+    - :attr:`~taskito.interception.InterceptionMode.OFF`: No interception at all —
+      passthrough to serializer.
     """
 
     def __init__(
         self,
         registry: TypeRegistry,
-        mode: str = "strict",
+        mode: InterceptionMode | str = InterceptionMode.STRICT,
         max_depth: int = 10,
         proxy_registry: ProxyRegistry | None = None,
         metrics: InterceptionMetrics | None = None,
     ) -> None:
-        if mode not in ("strict", "lenient", "off"):
-            raise ValueError(
-                f"Invalid interception mode: {mode!r}. Use 'strict', 'lenient', or 'off'."
-            )
         self._registry = registry
-        self._mode = mode
+        self._mode = coerce_enum(InterceptionMode, mode, param="interception mode")
         self._walker = ArgumentWalker(registry, max_depth=max_depth, proxy_registry=proxy_registry)
         self._metrics = metrics
 
     @property
-    def mode(self) -> str:
+    def mode(self) -> InterceptionMode:
         return self._mode
 
     def intercept(self, args: tuple, kwargs: dict) -> tuple[tuple, dict]:
@@ -84,7 +85,7 @@ class ArgumentInterceptor:
         Raises:
             InterceptionError: In strict mode, if any arguments are rejected.
         """
-        if self._mode == "off":
+        if self._mode is InterceptionMode.OFF:
             return args, kwargs
 
         start = time.monotonic()
@@ -99,7 +100,7 @@ class ArgumentInterceptor:
             )
 
         if walk_result.failures:
-            if self._mode == "strict":
+            if self._mode is InterceptionMode.STRICT:
                 raise InterceptionError(walk_result.failures)
             # Lenient mode: log warnings, strip rejected values
             for f in walk_result.failures:
@@ -115,7 +116,7 @@ class ArgumentInterceptor:
 
     def analyze(self, args: tuple, kwargs: dict) -> InterceptionReport:
         """Analyze arguments without transforming them. Returns a human-readable report."""
-        if self._mode == "off":
+        if self._mode is InterceptionMode.OFF:
             return InterceptionReport()
 
         report = InterceptionReport()

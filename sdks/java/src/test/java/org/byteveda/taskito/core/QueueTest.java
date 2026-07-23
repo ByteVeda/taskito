@@ -14,10 +14,13 @@ import java.util.Map;
 import java.util.Optional;
 import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.model.DispatchOrder;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
 import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskLogLevel;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.junit.jupiter.api.Test;
@@ -154,10 +157,47 @@ class QueueTest {
     void taskLogsRoundTrip(@TempDir Path dir) {
         try (Taskito queue = open(dir)) {
             String id = queue.enqueue("send_email", Collections.singletonMap("to", "a"));
-            queue.writeTaskLog(id, "send_email", "info", "hello");
+            queue.writeTaskLog(id, "send_email", TaskLogLevel.INFO, "hello");
             List<TaskLog> logs = queue.getTaskLogs(id);
             assertEquals(1, logs.size());
             assertEquals("hello", logs.get(0).message);
+        }
+    }
+
+    @Test
+    void logFiltersTakeAWireStringAndStayLenient(@TempDir Path dir) {
+        // The filters take a wire string rather than an enum so that `null` (no filter)
+        // still compiles — an enum/String overload pair is ambiguous on a bare null.
+        // An unrecognized level filters to nothing, since it usually arrives from a
+        // dashboard query string.
+        try (Taskito queue = open(dir)) {
+            String id = queue.enqueue("send_email", Collections.singletonMap("to", "a"));
+            queue.writeTaskLog(id, "send_email", TaskLogLevel.INFO, "hello");
+
+            assertEquals(1, queue.queryTaskLogs(null, null, 0, 10).size());
+            assertEquals(
+                    1,
+                    queue.queryTaskLogs(null, TaskLogLevel.INFO.wire(), 0, 10).size());
+            assertTrue(queue.queryTaskLogs(null, "verbose", 0, 10).isEmpty());
+        }
+    }
+
+    @Test
+    void typedOverloadsRejectANullEnum(@TempDir Path dir) {
+        // Without the guard these dereference the enum and surface an incidental NPE.
+        try (Taskito queue = open(dir)) {
+            assertThrows(IllegalArgumentException.class, () -> queue.dispatchOrder("default", (DispatchOrder) null));
+            assertThrows(IllegalArgumentException.class, () -> queue.writeTaskLog("j", "t", (TaskLogLevel) null, "m"));
+        }
+    }
+
+    @Test
+    void unknownWorkflowStateFilterIsRejectedByTheCore(@TempDir Path dir) {
+        // Unlike the log level, the state filter is validated in the core, so an
+        // unrecognized value raises instead of filtering to nothing.
+        try (Taskito queue = open(dir)) {
+            assertEquals(0, queue.listWorkflowRuns(null, null, 10, 0).size());
+            assertThrows(TaskitoException.class, () -> queue.listWorkflowRuns(null, "nonsense", 10, 0));
         }
     }
 }

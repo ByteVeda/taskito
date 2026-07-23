@@ -90,18 +90,23 @@ reconstruction. Without an allowlist, any path is permitted.
 
 ### Disabling specific handlers
 
-Disable individual handlers by name:
+Disable individual handlers by id — `BuiltInProxy` members or their strings:
 
 ```python
+from taskito import BuiltInProxy, Queue
+
 queue = Queue(
     db_path="tasks.db",
-    disabled_proxies=["requests_session", "gcs_client"],
+    disabled_proxies=[BuiltInProxy.REQUESTS_SESSION, BuiltInProxy.GCS_CLIENT],
 )
 ```
 
 Disabled handlers are not registered. Arguments of those types fall
 through to the serializer — or are rejected if they would otherwise be
 PROXY-classified and interception is strict.
+
+An id that isn't a built-in raises `ValueError` listing the valid ones, so a
+typo can't quietly leave the handler enabled.
 
 ## Cloud handlers
 

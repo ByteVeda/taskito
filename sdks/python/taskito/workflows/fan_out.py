@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from taskito.enums import coerce_enum
 from taskito.serializers import Serializer
+from taskito.workflows.types import FanStrategy
 
 
-def apply_fan_out(strategy: str, result: Any) -> list[Any]:
+def apply_fan_out(strategy: FanStrategy | str, result: Any) -> list[Any]:
     """Split a step's return value into individual fan-out items.
 
     Args:
-        strategy: The fan-out strategy (``"each"``).
+        strategy: The fan-out strategy — :attr:`FanStrategy.EACH`. Read back
+            from persisted step metadata, so a string is accepted.
         result: The predecessor step's return value.
 
     Returns:
@@ -21,7 +24,7 @@ def apply_fan_out(strategy: str, result: Any) -> list[Any]:
         TypeError: If the result is not iterable for the given strategy.
         ValueError: If the strategy is unknown.
     """
-    if strategy == "each":
+    if coerce_enum(FanStrategy, strategy, param="fan_out strategy") is FanStrategy.EACH:
         try:
             return list(result)
         except TypeError as exc:

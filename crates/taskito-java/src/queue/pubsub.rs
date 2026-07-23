@@ -9,7 +9,7 @@ use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::publish_to_topic;
-use taskito_core::storage::records::{NewSubscription, SUBSCRIPTION_MODE_LOG};
+use taskito_core::storage::records::{NewSubscription, SubscriptionMode};
 use taskito_core::Storage;
 
 use crate::backend;
@@ -54,7 +54,12 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
         let task_name = read_string(env, &task_name)?;
         let queue = read_string(env, &queue)?;
         let owner_worker_id = read_optional_string(env, &owner_worker_id)?;
-        let mode = read_string(env, &mode)?;
+        let mode_wire = read_string(env, &mode)?;
+        let mode = SubscriptionMode::parse(&mode_wire).ok_or_else(|| {
+            crate::error::BindingError::new(format!(
+                "unknown subscription mode '{mode_wire}' (expected 'fanout' or 'log')"
+            ))
+        })?;
         // An ownerless ephemeral row would never be reaped (the reaper matches
         // on owner) yet keeps receiving deliveries — reject it up front.
         if durable == 0 && owner_worker_id.is_none() {
@@ -355,7 +360,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_declareTop
         let retention = (retention_ms != jlong::MIN).then_some(retention_ms);
         queue
             .storage
-            .declare_topic(&name, SUBSCRIPTION_MODE_LOG, retention)?;
+            .declare_topic(&name, SubscriptionMode::Log, retention)?;
         Ok(())
     })
 }

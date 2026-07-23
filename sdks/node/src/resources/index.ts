@@ -13,3 +13,4 @@ export type {
   ResourceScope,
   ResourceStat,
 } from "./types";
+export { RESOURCE_SCOPES } from "./types";

@@ -116,9 +116,9 @@ def test_setup_failure_undoes_what_setup_did(tmp_path: Path) -> None:
         db_path=str(tmp_path / "setup.db"), workers=2, default_retry=0, middleware=[Recorder()]
     )
     try:
-        # Request scope, because its release calls `teardown` outright — a
-        # task-scoped resource goes back to a pool, where nothing observes it.
-        @q.worker_resource(name="db", scope="request", teardown=lambda conn: released.append(conn))
+        # Task scope, because its release calls `teardown` outright — a pooled
+        # resource goes back to the pool, where nothing observes it.
+        @q.worker_resource(name="db", scope="task", teardown=lambda conn: released.append(conn))
         def make_db() -> str:
             return "conn"
 

@@ -11,6 +11,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.util.List;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.dashboard.auth.Role;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -130,7 +131,7 @@ class DashboardAuthTest {
                 DashboardServer server = DashboardServer.start(queue, 0, true)) {
             DashboardClient.seedAdmin(queue); // keep setup satisfied
             DashboardClient viewer =
-                    new DashboardClient(server.port()).as(DashboardClient.seedUser(queue, "read-only", "viewer"));
+                    new DashboardClient(server.port()).as(DashboardClient.seedUser(queue, "read-only", Role.VIEWER));
             assertEquals(200, viewer.get("/api/stats").statusCode());
             assertEquals(403, viewer.post("/api/queues/emails/pause", null).statusCode());
         }
@@ -151,7 +152,7 @@ class DashboardAuthTest {
         try (Taskito queue = open(dir);
                 DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
-            DashboardClient client = new DashboardClient(port).as(DashboardClient.seedUser(queue, "root", "admin"));
+            DashboardClient client = new DashboardClient(port).as(DashboardClient.seedUser(queue, "root", Role.ADMIN));
             HttpResponse<String> changed = client.post(
                     "/api/auth/change-password", "{\"old_password\":\"password123\",\"new_password\":\"brand-new-1\"}");
             assertEquals(200, changed.statusCode());

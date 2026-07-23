@@ -30,9 +30,10 @@ from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.batching import BatchAccumulator, BatchConfig
 from taskito.codecs import CodecSerializer, PayloadCodec
+from taskito.enums import coerce_enum
 from taskito.events import EventBus, EventType
 from taskito.exceptions import QueueFullError, SerializationError
-from taskito.interception import ArgumentInterceptor
+from taskito.interception import ArgumentInterceptor, InterceptionMode
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
 from taskito.middleware import TaskMiddleware
@@ -54,7 +55,7 @@ from taskito.mixins import (
 )
 from taskito.notes import validate_and_encode_notes
 from taskito.proxies import ProxyRegistry
-from taskito.proxies.built_in import register_builtin_handlers
+from taskito.proxies.built_in import BuiltInProxy, register_builtin_handlers
 from taskito.proxies.metrics import ProxyMetrics
 from taskito.result import JobResult
 from taskito.retention import Retention
@@ -138,12 +139,12 @@ class Queue(
         schema: str = "taskito",
         pool_size: int | None = None,
         drain_timeout: int = 30,
-        interception: str = "off",
+        interception: InterceptionMode | str = InterceptionMode.OFF,
         max_intercept_depth: int = 10,
         recipe_signing_key: str | None = None,
         max_reconstruction_timeout: int = 10,
         file_path_allowlist: list[str] | None = None,
-        disabled_proxies: list[str] | None = None,
+        disabled_proxies: Sequence[BuiltInProxy | str] | None = None,
         async_concurrency: int = 100,
         event_workers: int = 4,
         scheduler_poll_interval_ms: int = 50,
@@ -197,17 +198,21 @@ class Queue(
                 that have low connection limits.
             drain_timeout: Seconds to wait for in-flight jobs to finish during
                 graceful shutdown. Defaults to 30.
-            interception: Argument interception mode — ``"strict"`` (reject
-                non-serializable args), ``"lenient"`` (warn and drop), or
-                ``"off"`` (disabled, default). See :mod:`taskito.interception`.
+            interception: Argument interception mode — an
+                :class:`~taskito.interception.InterceptionMode` or its string:
+                ``"strict"`` (reject non-serializable args), ``"lenient"`` (warn
+                and drop), or ``"off"`` (disabled, default). See
+                :mod:`taskito.interception`.
             max_intercept_depth: Maximum recursion depth for argument walking.
                 Defaults to 10.
             recipe_signing_key: HMAC-SHA256 key for proxy recipe integrity.
                 Falls back to ``TASKITO_RECIPE_SECRET`` env var.
             max_reconstruction_timeout: Max seconds for proxy reconstruction.
             file_path_allowlist: Allowed file paths for the file proxy handler.
-            disabled_proxies: Handler names to skip when registering built-in
-                proxy handlers.
+            disabled_proxies: Built-in proxy handlers to skip registering —
+                :class:`~taskito.proxies.built_in.BuiltInProxy` members or their
+                string ids. An unknown id raises rather than silently leaving
+                the handler registered.
             async_concurrency: Maximum number of async tasks running concurrently
                 on the native async executor. Defaults to 100.
             event_workers: Thread pool size for the event bus (default 4).
@@ -340,12 +345,13 @@ class Queue(
 
         # Argument interception
         self._interception_metrics: InterceptionMetrics | None = None
-        if interception != "off":
+        interception_mode = coerce_enum(InterceptionMode, interception, param="interception")
+        if interception_mode is not InterceptionMode.OFF:
             self._interception_metrics = InterceptionMetrics()
             registry = build_default_registry()
             self._interceptor: ArgumentInterceptor | None = ArgumentInterceptor(
                 registry=registry,
-                mode=interception,
+                mode=interception_mode,
                 max_depth=max_intercept_depth,
                 proxy_registry=self._proxy_registry,
                 metrics=self._interception_metrics,

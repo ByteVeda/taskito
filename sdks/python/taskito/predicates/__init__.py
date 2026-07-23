@@ -22,7 +22,7 @@ from taskito.predicates.core import (
 )
 from taskito.predicates.evaluate import evaluate_predicate
 from taskito.predicates.metrics import PredicateMetrics
-from taskito.predicates.outcomes import Cancel, Defer, PredicateOutcome
+from taskito.predicates.outcomes import Cancel, Defer, PredicateAction, PredicateOutcome
 from taskito.predicates.parser import format_predicate, parse
 from taskito.predicates.providers import FeatureFlagProvider, env_feature_flag_provider
 from taskito.predicates.recipes import (
@@ -53,6 +53,7 @@ __all__ = [
     "NotPredicate",
     "OrPredicate",
     "Predicate",
+    "PredicateAction",
     "PredicateContext",
     "PredicateMetrics",
     "PredicateOutcome",

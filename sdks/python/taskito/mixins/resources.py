@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from taskito.enums import coerce_enum
 from taskito.exceptions import CircularDependencyError
 from taskito.interception import InterceptionReport
 from taskito.resources.definition import ResourceDefinition, ResourceScope
@@ -35,7 +36,7 @@ class QueueResourceMixin:
         health_check: Callable | None = None,
         health_check_interval: float = 0.0,
         max_recreation_attempts: int = 3,
-        scope: str = "worker",
+        scope: ResourceScope | str = ResourceScope.WORKER,
         pool_size: int | None = None,
         pool_min: int = 0,
         acquire_timeout: float = 10.0,
@@ -53,10 +54,11 @@ class QueueResourceMixin:
             health_check: Optional callable that returns truthy if healthy.
             health_check_interval: Seconds between health checks (0 = disabled).
             max_recreation_attempts: Max times to recreate on health failure.
-            scope: Resource scope — ``"worker"``, ``"task"``, ``"thread"``,
-                or ``"request"``.
-            pool_size: Pool size for task-scoped resources.
-            pool_min: Minimum pre-warmed instances (task scope).
+            scope: :class:`~taskito.resources.ResourceScope` (or its string) —
+                ``WORKER`` (shared), ``THREAD`` (per worker thread), ``TASK``
+                (fresh per task), or ``POOLED`` (checkout from a bounded pool).
+            pool_size: Pool size. ``POOLED`` scope only.
+            pool_min: Minimum pre-warmed instances. ``POOLED`` scope only.
             acquire_timeout: Max seconds to wait for pool instance.
             max_lifetime: Max seconds a pooled instance lives.
             idle_timeout: Max idle seconds before eviction.
@@ -74,7 +76,7 @@ class QueueResourceMixin:
                     health_check=health_check,
                     health_check_interval=health_check_interval,
                     max_recreation_attempts=max_recreation_attempts,
-                    scope=ResourceScope(scope),
+                    scope=coerce_enum(ResourceScope, scope, param="scope"),
                     pool_size=pool_size,
                     pool_min=pool_min,
                     acquire_timeout=acquire_timeout,

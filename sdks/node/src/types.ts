@@ -28,6 +28,40 @@ export type {
   MeshWorkerConfig,
 } from "./native";
 
+/**
+ * Same-priority dispatch order. `"lifo"` runs newest-first under overload (a
+ * freshness lever); `"fifo"` (default) is the fair oldest-first ordering.
+ */
+export type DispatchOrder = "fifo" | "lifo";
+
+/** Every dispatch order, for runtime validation. */
+export const DISPATCH_ORDERS: readonly DispatchOrder[] = ["fifo", "lifo"];
+
+/**
+ * Severity of a structured task log. `"result"` is not a severity — it carries
+ * partial results published from a running task. Distinct from the SDK's own
+ * logger level (`LogLevel` in `./utils`): this one is persisted and read back
+ * by every SDK.
+ */
+export type TaskLogLevel = "debug" | "info" | "warning" | "error" | "critical" | "result";
+
+/**
+ * A task-log level as a *filter*: any string is accepted, because an unrecognized
+ * value must filter to nothing rather than fail — filters usually arrive from a
+ * dashboard query string. The union still autocompletes the known levels.
+ */
+export type TaskLogLevelFilter = TaskLogLevel | (string & {});
+
+/** Every task-log level, for runtime validation. */
+export const TASK_LOG_LEVELS: readonly TaskLogLevel[] = [
+  "debug",
+  "info",
+  "warning",
+  "error",
+  "critical",
+  "result",
+];
+
 /** One message pulled from a log topic; `id` is the cursor token for `ackTopic`. */
 export interface TopicMessage {
   /** Message id — pass to `ackTopic` to advance the cursor past it. */
@@ -226,7 +260,7 @@ export interface QueueLimits {
    * freshness lever); `"fifo"` (default) is the fair oldest-first ordering.
    * Priority always dominates. Honored on SQLite/Postgres; Redis is FIFO-only.
    */
-  dispatchOrder?: "fifo" | "lifo";
+  dispatchOrder?: DispatchOrder;
 }
 
 /** A task handler plus its registration options. */

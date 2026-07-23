@@ -27,7 +27,7 @@ public final class AuthHandlers {
         }
         String username = requireField(body, "username");
         String password = requireField(body, "password");
-        User user = store.createUser(username, password, AuthStore.ROLE_ADMIN);
+        User user = store.createUser(username, password, Role.ADMIN);
         return Map.of("user", serializeUser(user));
     }
 
