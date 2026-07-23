@@ -621,6 +621,41 @@ Read-only. The published document lives under the reserved `retention:`
 settings prefix, so it is neither listed nor writable through
 `/api/settings`.
 
+### `GET /api/retention/dry-run`
+
+How many rows a purge would delete right now, without deleting — the Settings
+page's purge preview. Unlike `/api/retention`, this is computed in-process
+against live storage, so it always answers.
+
+```json
+{
+  "enabled": true,
+  "defaulted": true,
+  "namespace": "default",
+  "reference_time": 1753200000000,
+  "windows": {
+    "task_logs_ttl_ms": 259200000,
+    "archived_jobs_ttl_ms": 604800000,
+    "job_errors_ttl_ms": 604800000,
+    "task_metrics_ttl_ms": 604800000,
+    "dead_letter_ttl_ms": 2592000000
+  },
+  "counts": {
+    "task_logs": 340,
+    "archived_jobs": 12,
+    "job_errors": 7,
+    "task_metrics": 5,
+    "dead_letter": 0
+  },
+  "total": 364
+}
+```
+
+`counts` mirror each table's purge exactly; `reference_time` is the Unix-ms
+instant the snapshot was taken. Read-only — nothing is deleted. The dashboard
+process previews its own windows, which may differ from a worker running
+configured windows elsewhere.
+
 ## Using the API programmatically
 
 The login/CSRF steps below apply to an auth-enabled dashboard; with auth
