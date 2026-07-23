@@ -49,4 +49,27 @@ public final class NodeSnapshot {
         this.compensationCompletedAt = compensationCompletedAt;
         this.compensationError = compensationError;
     }
+
+    /**
+     * How long this node ran, in milliseconds.
+     *
+     * @return {@code completedAt - startedAt}, or null while either timestamp is unset
+     *     (the node hasn't started, or hasn't finished).
+     */
+    public Long durationMs() {
+        return elapsed(startedAt, completedAt);
+    }
+
+    /**
+     * How long this node's compensation ran, in milliseconds.
+     *
+     * @return the rollback's elapsed time, or null outside a completed compensation flow.
+     */
+    public Long compensationDurationMs() {
+        return elapsed(compensationStartedAt, compensationCompletedAt);
+    }
+
+    private static Long elapsed(Long from, Long to) {
+        return from == null || to == null ? null : to - from;
+    }
 }

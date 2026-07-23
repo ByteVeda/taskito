@@ -14,6 +14,8 @@ public final class TaskContext {
 
     private final Map<String, Object> attributes = new HashMap<>();
     private final JobInfo job;
+    // Monotonic, so a wall-clock adjustment mid-task can't skew the elapsed time.
+    private final long startedAtNanos = System.nanoTime();
 
     public TaskContext(String jobId, String taskName, JobInfo job) {
         this.jobId = jobId;
@@ -33,5 +35,15 @@ public final class TaskContext {
     /** The executing job, including its (lazily loaded) metadata. */
     public JobInfo job() {
         return job;
+    }
+
+    /**
+     * Time spent on this execution so far, in milliseconds. Measured from when the
+     * worker built this context, so it covers the handler plus the middleware around it.
+     *
+     * @return elapsed milliseconds — in {@code after}/{@code onError}, the run's duration.
+     */
+    public long elapsedMs() {
+        return (System.nanoTime() - startedAtNanos) / 1_000_000L;
     }
 }

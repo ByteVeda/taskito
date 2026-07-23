@@ -138,8 +138,9 @@ timeout itself independently of the job's eventual fate.
 
 The execution hooks (`before`/`after`/`onError`) receive a `TaskContext` with
 `taskName`, `jobId`, and `args`. The outcome hooks receive an `OutcomeEvent`
-with `taskName`, `jobId`, `queue`, `retryCount`, and `timedOut` (which
-separates a timeout from other failures).
+with `taskName`, `jobId`, `queue`, `retryCount`, `timedOut` (which separates a
+timeout from other failures), and `durationMs` (absent when nothing measured
+the run).
 
 </SdkOnly>
 
@@ -159,10 +160,12 @@ separates a timeout from other failures).
 | `onCancel(event)` | After a job is cancelled. |
 
 The execution hooks receive a `TaskContext` with `taskName`, `jobId`, a
-mutable per-execution `attributes()` map shared across a job's hooks, and
-`job()` with lazily-loaded metadata. The outcome hooks receive an
-`OutcomeEvent` with `taskName`, `jobId`, `error`, `retryCount`, and
-`timedOut` (which separates a timeout from other failures).
+mutable per-execution `attributes()` map shared across a job's hooks,
+`job()` with lazily-loaded metadata, and `elapsedMs()` — time spent on this
+execution so far, so `after`/`onError` needn't start their own timer. The
+outcome hooks receive an `OutcomeEvent` with `taskName`, `jobId`, `error`,
+`retryCount`, `timedOut` (which separates a timeout from other failures), and
+`durationMs()` (null when nothing measured the run).
 
 </SdkOnly>
 

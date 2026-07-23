@@ -9,6 +9,8 @@ export interface OutcomeEvent {
   error?: string;
   retryCount?: number;
   timedOut?: boolean;
+  /** How long the job ran, in ms. Absent when nothing measured the run. */
+  durationMs?: number;
 }
 
 export type EventHandler = (event: OutcomeEvent) => void;

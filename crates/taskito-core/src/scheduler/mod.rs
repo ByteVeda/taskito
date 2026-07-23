@@ -169,6 +169,11 @@ impl JobResult {
 
 /// Outcome of processing a job result, returned to the caller (the binding)
 /// for its middleware hook dispatch.
+///
+/// `wall_time_ns` carries the execution time the worker measured, so a shell can
+/// report a job's duration without timing it again. It is 0 when nothing measured
+/// the run — a job that failed before it ever executed, or one the core recovered
+/// rather than a worker finishing it.
 #[derive(Debug, Clone)]
 pub enum ResultOutcome {
     /// Task completed successfully.
@@ -177,6 +182,8 @@ pub enum ResultOutcome {
         job_id: String,
         /// Task that ran.
         task_name: String,
+        /// Wall-clock execution time in nanoseconds; 0 when not measured.
+        wall_time_ns: i64,
     },
     /// Task failed and will be retried.
     Retry {
@@ -192,6 +199,8 @@ pub enum ResultOutcome {
         retry_count: i32,
         /// True when the failure was an execution timeout.
         timed_out: bool,
+        /// Wall-clock execution time in nanoseconds; 0 when not measured.
+        wall_time_ns: i64,
     },
     /// Task exhausted retries and moved to the dead-letter queue.
     DeadLettered {
@@ -205,6 +214,8 @@ pub enum ResultOutcome {
         error: String,
         /// True when the final failure was an execution timeout.
         timed_out: bool,
+        /// Wall-clock execution time in nanoseconds; 0 when not measured.
+        wall_time_ns: i64,
     },
     /// Task was cancelled during execution.
     Cancelled {
@@ -214,6 +225,8 @@ pub enum ResultOutcome {
         task_name: String,
         /// Queue the job belonged to.
         queue: String,
+        /// Wall-clock execution time in nanoseconds; 0 when not measured.
+        wall_time_ns: i64,
     },
 }
 
@@ -919,6 +932,131 @@ mod tests {
         let completed = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(completed.status, JobStatus::Complete);
         assert_eq!(completed.result, Some(vec![42]));
+    }
+
+    #[test]
+    fn test_outcomes_carry_measured_wall_time() {
+        // Shells report a job's duration off the outcome, so the worker's
+        // measurement has to survive handle_result — on every variant, and on
+        // the batch path that finalizes successes together.
+        let scheduler = test_scheduler();
+
+        let ok = enqueue_and_run(&scheduler, "timed_ok");
+        let outcome = scheduler
+            .handle_result(JobResult::Success {
+                job_id: ok.id.clone(),
+                result: None,
+                task_name: "timed_ok".to_string(),
+                wall_time_ns: 7_000_000,
+            })
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ResultOutcome::Success {
+                wall_time_ns: 7_000_000,
+                ..
+            }
+        ));
+
+        let retried = enqueue_and_run(&scheduler, "timed_retry");
+        let outcome = scheduler
+            .handle_result(JobResult::Failure {
+                job_id: retried.id.clone(),
+                error: "boom".to_string(),
+                retry_count: 0,
+                max_retries: 3,
+                task_name: "timed_retry".to_string(),
+                wall_time_ns: 3_500_000,
+                should_retry: true,
+                timed_out: false,
+            })
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ResultOutcome::Retry {
+                wall_time_ns: 3_500_000,
+                ..
+            }
+        ));
+
+        let dead = enqueue_and_run(&scheduler, "timed_dead");
+        let outcome = scheduler
+            .handle_result(JobResult::Failure {
+                job_id: dead.id.clone(),
+                error: "fatal".to_string(),
+                retry_count: 0,
+                max_retries: 0,
+                task_name: "timed_dead".to_string(),
+                wall_time_ns: 2_000_000,
+                should_retry: false,
+                timed_out: false,
+            })
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ResultOutcome::DeadLettered {
+                wall_time_ns: 2_000_000,
+                ..
+            }
+        ));
+
+        let cancelled = enqueue_and_run(&scheduler, "timed_cancel");
+        let outcome = scheduler
+            .handle_result(JobResult::Cancelled {
+                job_id: cancelled.id.clone(),
+                task_name: "timed_cancel".to_string(),
+                wall_time_ns: 1_250_000,
+            })
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ResultOutcome::Cancelled {
+                wall_time_ns: 1_250_000,
+                ..
+            }
+        ));
+
+        let batched = enqueue_and_run(&scheduler, "timed_batch");
+        let outcomes = scheduler.handle_results(vec![JobResult::Success {
+            job_id: batched.id.clone(),
+            result: None,
+            task_name: "timed_batch".to_string(),
+            wall_time_ns: 9_000_000,
+        }]);
+        assert!(matches!(
+            outcomes[0].as_ref().unwrap(),
+            ResultOutcome::Success {
+                wall_time_ns: 9_000_000,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_unmeasured_result_reports_zero_wall_time() {
+        // A job that failed before it ever ran has no duration to report; 0 is
+        // the contract's "not measured", which shells surface as null.
+        let scheduler = test_scheduler();
+        let job = enqueue_and_run(&scheduler, "never_ran");
+        let outcome = scheduler
+            .handle_result(JobResult::Failure {
+                job_id: job.id.clone(),
+                error: "async submit error".to_string(),
+                retry_count: 0,
+                max_retries: 3,
+                task_name: "never_ran".to_string(),
+                wall_time_ns: 0,
+                should_retry: true,
+                timed_out: false,
+            })
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ResultOutcome::Retry {
+                wall_time_ns: 0,
+                ..
+            }
+        ));
     }
 
     #[test]

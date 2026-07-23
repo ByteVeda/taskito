@@ -77,9 +77,11 @@ ends `COMPENSATED`, or `COMPENSATION_FAILED` if a rollback itself fails.
 `WorkflowStatus` exposes `state` (a `WorkflowState`: `RUNNING`, `COMPLETED`,
 `COMPLETED_WITH_FAILURES`, `FAILED`, `CANCELLED`, `COMPENSATING`,
 `COMPENSATED`, `COMPENSATION_FAILED`, …), `nodes` (per-step `NodeSnapshot`
-with `status`, `jobId`, `fanOutCount`, timestamps), `isTerminal()`,
-`node(name)`, and `failedStep()`. `taskito.workflowStatus(runId)` and
-`taskito.cancelWorkflow(runId)` work from any process by run id.
+with `status`, `jobId`, `fanOutCount`, timestamps, plus `durationMs()` and
+`compensationDurationMs()` — null while the leg hasn't both started and
+finished), `isTerminal()`, `node(name)`, and `failedStep()`.
+`taskito.workflowStatus(runId)` and `taskito.cancelWorkflow(runId)` work from
+any process by run id.
 
 ## Analysis & visualization
 
