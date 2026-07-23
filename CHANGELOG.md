@@ -22,6 +22,12 @@ underlying Rust crates are released together, in lock-step.
   workflow run state, dashboard role, subscription mode, and worker status. Wire and stored
   values are unchanged, and existing string callers keep working (Java keeps its `String`
   overloads, deprecated).
+- More closed-set surfaces typed, finishing the sweep above: workflow step `condition`
+  (`WorkflowCondition`, Python + Java), storage `backend` (`StorageBackend`, Python + Java),
+  interception `register_type(strategy=…)` (`Strategy`, Python), and the webhook delivery-log
+  `status` filter (`DeliveryStatus`, Python). Same non-breaking contract — a string still works.
+  Internally, Python's workflow tracker and saga orchestrator now compare node/run status against
+  the enums rather than string literals.
 
 ### Added
 
