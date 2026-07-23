@@ -154,7 +154,8 @@ public final class Step {
                     && !"on_failure".equals(condition)
                     && !"always".equals(condition)) {
                 throw new IllegalArgumentException("unknown condition '" + condition
-                        + "'; use on_success, on_failure, always, or condition(Condition)");
+                        + "'; use on_success, on_failure, always, a WorkflowCondition,"
+                        + " or condition(Condition)");
             }
             this.condition = condition;
             return this;
