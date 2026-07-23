@@ -1175,8 +1175,7 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     }
 
     @Override
-    public List<WorkflowRunInfo> listWorkflowRuns(
-            String definitionName, WorkflowState state, long limit, long offset) {
+    public List<WorkflowRunInfo> listWorkflowRuns(String definitionName, WorkflowState state, long limit, long offset) {
         String wire = state == null ? null : state.wire();
         return decodeList(backend.listWorkflowRunsJson(definitionName, wire, limit, offset), WorkflowRunInfo.class);
     }
