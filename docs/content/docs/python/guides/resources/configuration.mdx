@@ -92,7 +92,7 @@ pool that manages concurrent instances.
 ```python
 @queue.worker_resource(
     "session",
-    scope="task",
+    scope="pooled",
     pool_size=20,
     pool_min=5,
     acquire_timeout=5.0,

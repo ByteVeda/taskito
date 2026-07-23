@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from taskito.enums import coerce_enum
+
 
 class ResourceScope(Enum):
     """Lifetime of a resource instance. Names and wire forms are shared across SDKs.
@@ -52,9 +54,13 @@ class ResourceDefinition:
     frozen: bool = False
 
     def __post_init__(self) -> None:
-        # Pool tuning on a non-pooled scope is the one way the 0.21 rename can go
-        # wrong silently: `scope=TASK` used to mean "checkout from a pool", and now
-        # means "fresh per task". Reject it here so that misread fails loudly.
+        # Coerce first: a wire string is accepted here (TOML config, hand-built
+        # definitions), and the runtime dispatches on enum identity — a raw string
+        # would match no branch and leave the resource silently uninitialized.
+        self.scope = coerce_enum(ResourceScope, self.scope, param="scope")
+        # Pool tuning on a non-pooled scope is the one way the rename can go wrong
+        # silently: `scope=TASK` used to mean "checkout from a pool", and now means
+        # "fresh per task". Reject it here so that misread fails loudly.
         if self.scope is not ResourceScope.POOLED and (
             self.pool_size is not None or self.pool_min
         ):

@@ -115,7 +115,7 @@ resolved once per task, so there is no second resolve to build for.
 
 ```python
 # Pooled scope: each task checks out a session from a pool of up to 10
-@queue.worker_resource("db_session", scope="pooled", pool_size=10)
+@queue.worker_resource("db_session", scope="pooled", pool_size=10, depends_on=["db"])
 def create_session(db):
     return db()  # db must be a worker-scoped resource
 
