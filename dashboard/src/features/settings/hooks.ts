@@ -1,11 +1,18 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
-import { deleteSetting, fetchRetention, fetchSettings, setSetting } from "./api";
+import {
+  deleteSetting,
+  fetchRetention,
+  fetchRetentionDryRun,
+  fetchSettings,
+  setSetting,
+} from "./api";
 import type { SettingsSnapshot } from "./types";
 
 const KEY = ["settings"] as const;
 const RETENTION_KEY = ["retention"] as const;
+const RETENTION_DRY_RUN_KEY = ["retention", "dry-run"] as const;
 
 /**
  * Return a user-friendly error description.
@@ -41,6 +48,17 @@ export function retentionQuery() {
 
 export function useRetention() {
   return useQuery(retentionQuery());
+}
+
+export function retentionDryRunQuery() {
+  return queryOptions({
+    queryKey: RETENTION_DRY_RUN_KEY,
+    queryFn: ({ signal }) => fetchRetentionDryRun(signal),
+  });
+}
+
+export function useRetentionDryRun() {
+  return useQuery(retentionDryRunQuery());
 }
 
 interface UpdateInput {

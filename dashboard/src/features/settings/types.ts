@@ -65,3 +65,28 @@ export interface RetentionSnapshot {
   reported_at: number | null;
   windows: RetentionWindows;
 }
+
+/** Rows a purge would remove per table, from ``GET /api/retention/dry-run``. */
+export interface RetentionCounts {
+  task_logs: number;
+  archived_jobs: number;
+  job_errors: number;
+  task_metrics: number;
+  dead_letter: number;
+}
+
+/**
+ * What ``GET /api/retention/dry-run`` reports: how many rows a purge would
+ * remove right now under the previewed windows, without deleting. Computed
+ * in-process, so it always answers — never the unreported state ``/api/retention``
+ * can return.
+ */
+export interface RetentionPreview {
+  enabled: boolean;
+  defaulted: boolean;
+  namespace: string;
+  reference_time: number;
+  windows: RetentionWindows;
+  counts: RetentionCounts;
+  total: number;
+}
