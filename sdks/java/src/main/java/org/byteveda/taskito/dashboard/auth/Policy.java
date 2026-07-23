@@ -64,7 +64,7 @@ public final class Policy {
         if (isStateChanging(method) && !isCsrfExempt(path) && !ctx.csrfValid()) {
             throw DashboardError.forbidden("csrf_failed");
         }
-        if (requiresAdmin(path, method) && ctx.session().role() != Role.ADMIN) {
+        if (requiresAdmin(path, method) && Role.orViewer(ctx.session().role()) != Role.ADMIN) {
             throw DashboardError.forbidden("forbidden");
         }
     }

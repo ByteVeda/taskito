@@ -20,12 +20,38 @@ class AuthStoreTest {
     }
 
     @Test
+    void modelsExposeTheWireFormSoExistingCallersStillCompile() {
+        // A Java enum is not a String, so typing these accessors would break every
+        // `String role = session.role()` caller. The enum owns validation and the
+        // decisions; the models carry the wire form the other SDKs also expose.
+        AuthStore store = store();
+        User user = store.createUser("alice", "password123", Role.ADMIN);
+        String userRole = user.role();
+        String sessionRole = store.createSession("alice", Role.ADMIN).role();
+        assertEquals("admin", userRole);
+        assertEquals("admin", sessionRole);
+        assertEquals(Role.ADMIN, Role.fromWire(userRole));
+    }
+
+    @Test
+    void storedRoleNothingRecognizesReadsBackAsViewer() {
+        InMemorySettings settings = new InMemorySettings();
+        AuthStore store = new AuthStore(settings);
+        store.createUser("alice", "password123", Role.ADMIN);
+        String users = settings.getSetting(AuthStore.USERS_KEY).orElseThrow();
+        settings.setSetting(AuthStore.USERS_KEY, users.replace("\"admin\"", "\"superuser\""));
+
+        // Fails closed on read rather than handing back an unusable role.
+        assertEquals(Role.VIEWER.wire(), store.getUser("alice").orElseThrow().role());
+    }
+
+    @Test
     void createsAndAuthenticatesUsers() {
         AuthStore store = store();
         assertEquals(0, store.countUsers());
         User user = store.createUser("alice", "password123", Role.ADMIN);
         assertEquals("alice", user.username());
-        assertEquals(Role.ADMIN, user.role());
+        assertEquals(Role.ADMIN.wire(), user.role());
         assertNull(user.lastLoginAt());
         assertEquals(1, store.countUsers());
 
@@ -104,12 +130,12 @@ class AuthStoreTest {
         AuthStore store = store();
         User created = store.getOrCreateOauthUser("google", "123", "a@x.com", "Ann", true, List.of("a@x.com"));
         assertEquals("google:123", created.username());
-        assertEquals(Role.ADMIN, created.role()); // allowlisted
+        assertEquals(Role.ADMIN.wire(), created.role()); // allowlisted
         assertTrue(created.isOauth());
 
         User refreshed = store.getOrCreateOauthUser("google", "123", "new@x.com", "Ann N", true, List.of("z@x.com"));
         assertEquals("google:123", refreshed.username());
-        assertEquals(Role.ADMIN, refreshed.role()); // role preserved
+        assertEquals(Role.ADMIN.wire(), refreshed.role()); // role preserved
         assertEquals("new@x.com", refreshed.email());
         assertEquals(1, store.countUsers());
     }

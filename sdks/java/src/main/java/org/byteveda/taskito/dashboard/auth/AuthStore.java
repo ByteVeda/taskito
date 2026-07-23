@@ -85,7 +85,7 @@ public final class AuthStore {
         row.put("last_login_at", null);
         users.put(username, row);
         saveUsers(users);
-        return new User(username, hash, role, now, null, null, null);
+        return new User(username, hash, role.wire(), now, null, null, null);
     }
 
     /** Verify credentials; {@code null} on any failure. Updates last-login on success. */
@@ -233,7 +233,7 @@ public final class AuthStore {
         row.put("expires_at", expires);
         row.put("csrf_token", csrf);
         settings.setSetting(SESSION_PREFIX + token, Json.toString(row));
-        return new Session(token, username, role, now, expires, csrf);
+        return new Session(token, username, role.wire(), now, expires, csrf);
     }
 
     /** Resolve a session token; deletes and returns empty if expired/malformed. */
@@ -254,7 +254,7 @@ public final class AuthStore {
             session = new Session(
                     token,
                     (String) data.get("username"),
-                    Role.orViewer((String) data.get("role")),
+                    Role.orViewer((String) data.get("role")).wire(),
                     asLong(data.get("created_at")),
                     asLong(data.get("expires_at")),
                     (String) data.get("csrf_token"));
@@ -354,7 +354,7 @@ public final class AuthStore {
         return new User(
                 username,
                 (String) row.get("password_hash"),
-                Role.orViewer((String) row.get("role")),
+                Role.orViewer((String) row.get("role")).wire(),
                 asLong(row.get("created_at")),
                 row.get("last_login_at") == null ? null : asLong(row.get("last_login_at")),
                 (String) row.get("email"),

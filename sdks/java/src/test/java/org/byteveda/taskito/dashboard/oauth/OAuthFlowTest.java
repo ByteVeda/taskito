@@ -59,7 +59,7 @@ class OAuthFlowTest {
         String state = fake.lastState.state();
         OAuthFlow.CallbackResult result = flow.handleCallback("fake", "code", state, null);
         assertEquals("fake:subject-1", result.session().username());
-        assertEquals(Role.VIEWER, result.session().role()); // admin comes only from the allowlist
+        assertEquals(Role.VIEWER.wire(), result.session().role()); // admin comes only from the allowlist
         assertEquals("/next", result.nextUrl());
         assertTrue(authStore.getUser("fake:subject-1").isPresent());
     }
