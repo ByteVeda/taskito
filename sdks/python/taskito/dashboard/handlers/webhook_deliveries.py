@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from taskito.dashboard.delivery_store import DeliveryRecord, DeliveryStore
+from taskito.dashboard.delivery_store import DeliveryRecord, DeliveryStatus, DeliveryStore
 from taskito.dashboard.errors import _BadRequest, _NotFound
 from taskito.dashboard.webhook_store import WebhookSubscriptionStore
 
@@ -44,9 +44,14 @@ def handle_list_deliveries(queue: Queue, qs: dict, subscription_id: str) -> dict
     ``event``, ``limit``, and ``offset`` query parameters."""
     _ensure_subscription(queue, subscription_id)
 
-    status = qs.get("status", [None])[0]
-    if status is not None and status not in {"delivered", "failed", "dead", "pending"}:
-        raise _BadRequest("status must be one of: delivered, failed, dead, pending")
+    status_raw = qs.get("status", [None])[0]
+    status: DeliveryStatus | None = None
+    if status_raw:
+        try:
+            status = DeliveryStatus(status_raw)
+        except ValueError:
+            valid = ", ".join(s.value for s in DeliveryStatus)
+            raise _BadRequest(f"status must be one of: {valid}") from None
     event = qs.get("event", [None])[0]
 
     limit = min(_parse_int_param(qs, "limit", 50, minimum=1), _MAX_PAGE_SIZE)
@@ -98,7 +103,11 @@ def handle_replay_delivery(queue: Queue, sub_and_delivery_id: tuple[str, str]) -
         subscription_id,
         event=str(payload.get("event", record.event)),
         payload=payload,
-        status="delivered" if status is not None and status < 400 else "failed",
+        status=(
+            DeliveryStatus.DELIVERED
+            if status is not None and status < 400
+            else DeliveryStatus.FAILED
+        ),
         attempts=1,
         response_code=status,
         task_name=record.task_name,
