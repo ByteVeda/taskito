@@ -2,33 +2,52 @@
 
 from __future__ import annotations
 
+import enum
+from collections.abc import Sequence
+
+from taskito.enums import coerce_enum
 from taskito.proxies.handlers.file import FileHandler
 from taskito.proxies.handlers.logger import LoggerHandler
 from taskito.proxies.registry import ProxyRegistry
 
 
+class BuiltInProxy(str, enum.Enum):
+    """Ids of the proxy handlers registered by default, for ``disabled_proxies``."""
+
+    FILE = "file"
+    LOGGER = "logger"
+    REQUESTS_SESSION = "requests_session"
+    HTTPX_CLIENT = "httpx_client"
+    BOTO3_CLIENT = "boto3_client"
+    GCS_CLIENT = "gcs_client"
+
+
 def register_builtin_handlers(
     registry: ProxyRegistry,
     *,
-    disabled_proxies: list[str] | None = None,
+    disabled_proxies: Sequence[BuiltInProxy | str] | None = None,
     file_path_allowlist: list[str] | None = None,
 ) -> None:
     """Register all built-in proxy handlers into the given registry.
 
     Args:
         registry: The proxy registry to register handlers with.
-        disabled_proxies: Handler names to skip registration for.
+        disabled_proxies: Handlers to skip registration for. An unknown id
+            raises rather than silently leaving the handler registered.
         file_path_allowlist: Allowed paths for the file handler.
     """
-    disabled = set(disabled_proxies or [])
+    disabled = {
+        coerce_enum(BuiltInProxy, proxy, param="disabled_proxies entry")
+        for proxy in disabled_proxies or ()
+    }
 
-    if "file" not in disabled:
+    if BuiltInProxy.FILE not in disabled:
         registry.register(FileHandler(path_allowlist=file_path_allowlist or []))
-    if "logger" not in disabled:
+    if BuiltInProxy.LOGGER not in disabled:
         registry.register(LoggerHandler())
 
     # Optional dependencies
-    if "requests_session" not in disabled:
+    if BuiltInProxy.REQUESTS_SESSION not in disabled:
         try:
             from taskito.proxies.handlers.requests_session import (
                 _HAS_REQUESTS,
@@ -40,7 +59,7 @@ def register_builtin_handlers(
         except ImportError:
             pass
 
-    if "httpx_client" not in disabled:
+    if BuiltInProxy.HTTPX_CLIENT not in disabled:
         try:
             from taskito.proxies.handlers.httpx_client import (
                 _HAS_HTTPX,
@@ -52,7 +71,7 @@ def register_builtin_handlers(
         except ImportError:
             pass
 
-    if "boto3_client" not in disabled:
+    if BuiltInProxy.BOTO3_CLIENT not in disabled:
         try:
             from taskito.proxies.handlers.boto3_client import (
                 _HAS_BOTO3,
@@ -64,7 +83,7 @@ def register_builtin_handlers(
         except ImportError:
             pass
 
-    if "gcs_client" not in disabled:
+    if BuiltInProxy.GCS_CLIENT not in disabled:
         try:
             from taskito.proxies.handlers.gcs_client import (
                 _HAS_GCS,

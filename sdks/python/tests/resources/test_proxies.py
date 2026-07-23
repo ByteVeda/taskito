@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from taskito import ProxyReconstructionError, Queue
-from taskito.proxies import ProxyRegistry, cleanup_proxies, reconstruct_proxies
+from taskito.proxies import BuiltInProxy, ProxyRegistry, cleanup_proxies, reconstruct_proxies
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.handlers.file import FileHandler
 from taskito.proxies.handlers.logger import LoggerHandler
@@ -500,3 +500,24 @@ def test_file_handler_rejects_sibling_prefix_bypass(tmp_path: Any) -> None:
     recipe = {"path": str(secret), "mode": "r"}
     with pytest.raises(ProxyReconstructionError, match="not in the allowed"):
         handler.reconstruct(recipe, 1)
+
+
+class TestDisabledProxies:
+    """``disabled_proxies`` ids are a closed set — a typo must not pass silently."""
+
+    def test_enum_member_disables_handler(self) -> None:
+        registry = ProxyRegistry()
+        register_builtin_handlers(registry, disabled_proxies=[BuiltInProxy.LOGGER])
+        assert registry.get("logger") is None
+        assert registry.get("file") is not None
+
+    def test_wire_string_still_disables_handler(self) -> None:
+        """Existing string callers keep working."""
+        registry = ProxyRegistry()
+        register_builtin_handlers(registry, disabled_proxies=["logger"])
+        assert registry.get("logger") is None
+
+    def test_unknown_id_raises_instead_of_silently_registering(self) -> None:
+        """The bug this replaces: 'requests' left requests_session registered."""
+        with pytest.raises(ValueError, match="requests_session"):
+            register_builtin_handlers(ProxyRegistry(), disabled_proxies=["requests"])
