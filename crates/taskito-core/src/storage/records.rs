@@ -211,10 +211,20 @@ impl SubscriptionMode {
 
     /// Parse a persisted `mode`. Anything unrecognized reads as fan-out, which is
     /// what the column's pre-enum readers did with a value that wasn't `"log"`.
+    /// Use [`Self::parse`] for caller input, where a typo must not pass silently.
     pub fn from_wire(wire: &str) -> Self {
         match wire {
             "log" => SubscriptionMode::Log,
             _ => SubscriptionMode::Fanout,
+        }
+    }
+
+    /// Strictly parse caller-supplied input; `None` for anything outside the set.
+    pub fn parse(wire: &str) -> Option<Self> {
+        match wire {
+            "fanout" => Some(SubscriptionMode::Fanout),
+            "log" => Some(SubscriptionMode::Log),
+            _ => None,
         }
     }
 

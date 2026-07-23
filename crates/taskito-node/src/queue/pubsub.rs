@@ -45,9 +45,14 @@ impl JsQueue {
                 "an ephemeral subscription (durable=false) requires ownerWorkerId",
             ));
         }
-        let mode = mode
-            .map(|m| SubscriptionMode::from_wire(&m))
-            .unwrap_or_default();
+        let mode = match mode {
+            Some(m) => SubscriptionMode::parse(&m).ok_or_else(|| {
+                invalid_arg(format!(
+                    "unknown subscription mode '{m}' (expected 'fanout' or 'log')"
+                ))
+            })?,
+            None => SubscriptionMode::default(),
+        };
         let storage = self.storage.clone();
         spawn_blocking(move || {
             let row = NewSubscription {
@@ -194,10 +199,15 @@ impl JsQueue {
         mode: String,
         retention_ms: Option<i64>,
     ) -> Result<()> {
+        let parsed = SubscriptionMode::parse(&mode).ok_or_else(|| {
+            invalid_arg(format!(
+                "unknown subscription mode '{mode}' (expected 'fanout' or 'log')"
+            ))
+        })?;
         let storage = self.storage.clone();
         spawn_blocking(move || {
             storage
-                .declare_topic(&name, SubscriptionMode::from_wire(&mode), retention_ms)
+                .declare_topic(&name, parsed, retention_ms)
                 .map_err(to_napi_err)
         })
         .await

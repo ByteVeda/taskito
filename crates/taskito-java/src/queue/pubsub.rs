@@ -54,7 +54,12 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
         let task_name = read_string(env, &task_name)?;
         let queue = read_string(env, &queue)?;
         let owner_worker_id = read_optional_string(env, &owner_worker_id)?;
-        let mode = SubscriptionMode::from_wire(&read_string(env, &mode)?);
+        let mode_wire = read_string(env, &mode)?;
+        let mode = SubscriptionMode::parse(&mode_wire).ok_or_else(|| {
+            crate::error::BindingError::new(format!(
+                "unknown subscription mode '{mode_wire}' (expected 'fanout' or 'log')"
+            ))
+        })?;
         // An ownerless ephemeral row would never be reaped (the reaper matches
         // on owner) yet keeps receiving deliveries — reject it up front.
         if durable == 0 && owner_worker_id.is_none() {
