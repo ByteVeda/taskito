@@ -11,6 +11,7 @@ import {
 } from "../../src/index";
 import { ResourcePool } from "../../src/resources/pool";
 import { ResourceRuntime } from "../../src/resources/runtime";
+import type { ResourceScope } from "../../src/resources/types";
 
 let worker: Worker | undefined;
 
@@ -312,6 +313,34 @@ describe("request-scoped resources in the runtime", () => {
     const scope = rt.createTaskScope();
     expect(await scope.resolver("perTask")).toBe(await scope.resolver("perTask"));
     expect(builds).toBe(1);
+    await scope.teardown();
+  });
+});
+
+describe("resource scope validation", () => {
+  it("rejects an unknown scope at registration", () => {
+    const rt = new ResourceRuntime();
+    // TypeScript stops this at compile time; a plain-JS caller would otherwise
+    // land in the task branch and get different lifecycle semantics silently.
+    expect(() =>
+      rt.register("bad", { scope: "per-request" as ResourceScope, factory: () => 1 }),
+    ).toThrow(/unknown scope/);
+  });
+
+  it("rejects a direct request-scope dependency cycle", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "request", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("rejects an indirect request-scope cycle through a task resource", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "request", factory: (ctx) => ctx.use("b") });
+    rt.register("b", { scope: "task", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
     await scope.teardown();
   });
 });

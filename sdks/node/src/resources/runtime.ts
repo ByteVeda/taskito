@@ -1,4 +1,9 @@
-import { ResourceNotFoundError, ResourceScopeError, ResourceUnavailableError } from "../errors";
+import {
+  ResourceError,
+  ResourceNotFoundError,
+  ResourceScopeError,
+  ResourceUnavailableError,
+} from "../errors";
 import { createLogger } from "../utils";
 import { HealthChecker } from "./health";
 import { ResourcePool } from "./pool";
@@ -9,8 +14,12 @@ import type {
   ResourceResolver,
   ResourceScope,
 } from "./types";
+import { RESOURCE_SCOPES } from "./types";
 
 const log = createLogger("resources");
+
+/** Shared empty ancestry for a top-level resolve. */
+const EMPTY_CHAIN: ReadonlySet<string> = new Set();
 
 /** A disposal thunk plus the resource name, for error context. */
 interface Teardown {
@@ -58,6 +67,11 @@ export class ResourceRuntime {
 
   /** Register (or replace) a resource definition. */
   register<T>(name: string, definition: ResourceDefinition<T>): void {
+    if (!(RESOURCE_SCOPES as readonly string[]).includes(definition.scope)) {
+      throw new ResourceError(
+        `resource "${name}": unknown scope "${definition.scope}" — expected one of ${RESOURCE_SCOPES.join(", ")}`,
+      );
+    }
     this.defs.set(name, definition as ResourceDefinition);
     // A replacement definition starts with a clean bill of health.
     this.unhealthy.delete(name);
@@ -177,7 +191,10 @@ export class ResourceRuntime {
     const taskCache = new Map<string, Promise<unknown>>();
     const taskTeardown: Teardown[] = [];
 
-    const resolve: ResourceResolver = (name) => {
+    const resolve = (
+      name: string,
+      building: ReadonlySet<string> = EMPTY_CHAIN,
+    ): Promise<unknown> => {
       const def = this.defs.get(name);
       if (!def) {
         return Promise.reject(unregistered(name));
@@ -215,9 +232,20 @@ export class ResourceRuntime {
       if (def.scope === "request") {
         // Fresh on every resolve, never cached: N `useResource()` calls inside one
         // task yield N instances, each disposed with the task (LIFO, like the rest).
+        // Being uncached is also why a cycle cannot resolve itself the way a task
+        // resource does — there is no pending promise to hand back, so track the
+        // chain and reject instead of recursing forever.
+        if (building.has(name)) {
+          return Promise.reject(
+            new ResourceError(
+              `resource "${name}": request-scope dependency cycle (${[...building, name].join(" -> ")})`,
+            ),
+          );
+        }
+        const chain = new Set(building).add(name);
         const ctx: ResourceContext = {
           scope: "request",
-          use: <T>(dep: string) => resolve(dep) as Promise<T>,
+          use: <T>(dep: string) => resolve(dep, chain) as Promise<T>,
         };
         const counter = this.counter(name);
         counter.created += 1;
@@ -236,7 +264,7 @@ export class ResourceRuntime {
       }
       const ctx: ResourceContext = {
         scope: "task",
-        use: <T>(dep: string) => resolve(dep) as Promise<T>,
+        use: <T>(dep: string) => resolve(dep, building) as Promise<T>,
       };
       const counter = this.counter(name);
       counter.created += 1;
@@ -254,7 +282,8 @@ export class ResourceRuntime {
       return built;
     };
 
-    return { resolver: resolve, teardown: () => runTeardown(taskTeardown) };
+    const resolver: ResourceResolver = (name) => resolve(name);
+    return { resolver, teardown: () => runTeardown(taskTeardown) };
   }
 
   /** Register a worker that shares this runtime's worker-scoped resources. */
