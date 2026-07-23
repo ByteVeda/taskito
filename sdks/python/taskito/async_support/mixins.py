@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from concurrent.futures import Executor
 
     from taskito.context import LogLevel
+    from taskito.mixins.periodic import PeriodicInfo
     from taskito.pagination import Page
     from taskito.result import JobResult
     from taskito.retention import EffectiveRetention
@@ -130,6 +131,10 @@ class AsyncQueueMixin:
         def resume(self, queue_name: str = ...) -> None: ...
         def paused_queues(self) -> list[str]: ...
         def effective_retention(self) -> EffectiveRetention | None: ...
+        def list_periodic(self) -> list[PeriodicInfo]: ...
+        def delete_periodic(self, name: str) -> bool: ...
+        def pause_periodic(self, name: str) -> bool: ...
+        def resume_periodic(self, name: str) -> bool: ...
         def resource_status(self) -> list[dict[str, Any]]: ...
         def reload_resources(self, names: list[str] | None = ...) -> dict[str, bool]: ...
 
@@ -296,6 +301,24 @@ class AsyncQueueMixin:
     async def aeffective_retention(self) -> EffectiveRetention | None:
         """Async version of :meth:`effective_retention`."""
         return await self._run_sync(self.effective_retention)
+
+    # -- Periodic --
+
+    async def alist_periodic(self) -> list[PeriodicInfo]:
+        """Async version of :meth:`list_periodic`."""
+        return await self._run_sync(self.list_periodic)
+
+    async def adelete_periodic(self, name: str) -> bool:
+        """Async version of :meth:`delete_periodic`."""
+        return await self._run_sync(self.delete_periodic, name)
+
+    async def apause_periodic(self, name: str) -> bool:
+        """Async version of :meth:`pause_periodic`."""
+        return await self._run_sync(self.pause_periodic, name)
+
+    async def aresume_periodic(self, name: str) -> bool:
+        """Async version of :meth:`resume_periodic`."""
+        return await self._run_sync(self.resume_periodic, name)
 
     # -- Locks --
 

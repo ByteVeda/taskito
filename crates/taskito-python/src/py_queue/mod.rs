@@ -784,16 +784,30 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// List all registered periodic tasks as `(name, task_name, cron_expr, enabled)` tuples.
-    pub fn list_periodic(&self) -> PyResult<Vec<(String, String, String, bool)>> {
+    /// List all registered periodic tasks, enabled or paused. Omits the opaque
+    /// args/kwargs payloads; `last_run`/`next_run` are Unix milliseconds.
+    pub fn list_periodic(&self) -> PyResult<Vec<Py<PyAny>>> {
         let rows = self
             .storage
             .list_periodic()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| (row.name, row.task_name, row.cron_expr, row.enabled))
-            .collect())
+
+        Python::attach(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for row in rows {
+                let dict = PyDict::new(py);
+                dict.set_item("name", row.name)?;
+                dict.set_item("task_name", row.task_name)?;
+                dict.set_item("cron_expr", row.cron_expr)?;
+                dict.set_item("queue", row.queue)?;
+                dict.set_item("enabled", row.enabled)?;
+                dict.set_item("last_run", row.last_run)?;
+                dict.set_item("next_run", row.next_run)?;
+                dict.set_item("timezone", row.timezone)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
     }
 
     /// Remove a periodic task. Returns false if no task had that name.

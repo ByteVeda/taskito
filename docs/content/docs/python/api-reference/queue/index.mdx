@@ -159,6 +159,23 @@ Register a periodic (cron-scheduled) task. Uses 6-field cron expressions with se
 | `queue` | `str` | `"default"` | Named queue to submit to. |
 | `timezone` | `str \| None` | `None` | IANA timezone name (e.g. `"America/New_York"`). Defaults to UTC. |
 
+### Periodic catalog
+
+Schedules reach storage when `run_worker()` starts; these act on what is there,
+so they outlive the decorator that declared them.
+
+| Method | Returns | Description |
+|---|---|---|
+| `queue.list_periodic()` | `list[PeriodicInfo]` | Every registered schedule, enabled or paused. |
+| `queue.pause_periodic(name)` | `bool` | Stop a schedule firing, keeping the registration. `False` if unknown. |
+| `queue.resume_periodic(name)` | `bool` | Resume a paused schedule. `False` if unknown. |
+| `queue.delete_periodic(name)` | `bool` | Unschedule. `False` if unknown. |
+
+`PeriodicInfo` fields: `name`, `task_name`, `cron_expr`, `queue`, `enabled`,
+`last_run` (`None` until first fire), `next_run`, `timezone`. Timestamps are
+Unix milliseconds. Async forms: `alist_periodic`, `apause_periodic`,
+`aresume_periodic`, `adelete_periodic`.
+
 ## Enqueue methods
 
 ### `queue.enqueue()`
