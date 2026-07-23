@@ -1,4 +1,4 @@
-"""Coercion helper for the closed-set enums on public entry points."""
+"""Cross-cutting closed-set enums plus the coercion helper for entry points."""
 
 from __future__ import annotations
 
@@ -6,6 +6,14 @@ import enum
 from typing import TypeVar
 
 E = TypeVar("E", bound=enum.Enum)
+
+
+class StorageBackend(str, enum.Enum):
+    """Storage backend for a :class:`~taskito.app.Queue`."""
+
+    SQLITE = "sqlite"
+    POSTGRES = "postgres"
+    REDIS = "redis"
 
 
 def coerce_enum(enum_cls: type[E], value: E | str, *, param: str) -> E:

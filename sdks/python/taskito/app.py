@@ -30,7 +30,7 @@ from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.batching import BatchAccumulator, BatchConfig
 from taskito.codecs import CodecSerializer, PayloadCodec
-from taskito.enums import coerce_enum
+from taskito.enums import StorageBackend, coerce_enum
 from taskito.events import EventBus, EventType
 from taskito.exceptions import QueueFullError, SerializationError
 from taskito.interception import ArgumentInterceptor, InterceptionMode
@@ -134,7 +134,7 @@ class Queue(
         codec: PayloadCodec | Sequence[PayloadCodec] | None = None,
         codecs: dict[str, PayloadCodec] | None = None,
         middleware: list[TaskMiddleware] | None = None,
-        backend: str = "sqlite",
+        backend: StorageBackend | str = StorageBackend.SQLITE,
         db_url: str | None = None,
         schema: str = "taskito",
         pool_size: int | None = None,
@@ -188,7 +188,9 @@ class Queue(
                 via ``@queue.task(codecs=["name", ...])``; applies to task
                 payloads only (results stay on the queue serializer).
             middleware: List of global middleware instances applied to all tasks.
-            backend: Storage backend — ``"sqlite"`` (default) or ``"postgres"``.
+            backend: Storage backend — a
+                :class:`~taskito.enums.StorageBackend` or its string:
+                ``"sqlite"`` (default), ``"postgres"``, or ``"redis"``.
             db_url: PostgreSQL connection URL (required when backend is ``"postgres"``).
                 Example: ``"postgresql://user:pass@localhost/taskito"``.
             schema: PostgreSQL schema name for all taskito tables. Defaults to
@@ -243,6 +245,11 @@ class Queue(
                 guarantee as the rate limiter. Also settable at runtime via
                 ``set_queue_max_pending``.
         """
+        # Unwrap the enum to its wire string; a raw string still passes through
+        # so the native layer's aliases (e.g. "postgresql") keep working.
+        if isinstance(backend, StorageBackend):
+            backend = backend.value
+
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
             db_dir = os.path.dirname(db_path)
