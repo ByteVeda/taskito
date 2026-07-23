@@ -35,6 +35,13 @@ underlying Rust crates are released together, in lock-step.
   `durationMs` on Node's, and `duration_ms` on Python's job event payloads. Java also gains
   `NodeSnapshot.durationMs()` / `compensationDurationMs()` and `TaskContext.elapsedMs()`.
 
+### Fixed
+
+- **Postgres segfault on process exit.** The connection pool opens connections on background
+  threads that can still be running libpq/OpenSSL when the process exits, racing OpenSSL's
+  default `atexit` teardown. Taskito now initializes OpenSSL itself with that teardown
+  suppressed (`OPENSSL_INIT_NO_ATEXIT`) before the first Postgres connection.
+
 ## 0.21.0
 
 Overload-controls and retention release. The queue gains admission and load-shedding controls,
