@@ -241,8 +241,11 @@ class Workflow:
             resolved_compensates = None
         elif isinstance(compensates, str):
             resolved_compensates = compensates
-        elif hasattr(compensates, "name"):  # TaskWrapper / HasTaskName
-            resolved_compensates = compensates.name
+        elif getattr(compensates, "_task_name", None) or getattr(compensates, "name", None):
+            # HasTaskName exposes `_task_name`; a TaskWrapper also exposes `.name`.
+            resolved_compensates = getattr(compensates, "_task_name", None) or getattr(
+                compensates, "name", None
+            )
         else:
             raise TypeError("compensates= must be a TaskWrapper, task-name string, or None")
 
