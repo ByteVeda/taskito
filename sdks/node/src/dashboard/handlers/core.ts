@@ -4,7 +4,6 @@
 import { randomBytes } from "node:crypto";
 import type { EventName } from "../../events";
 import type { Queue } from "../../index";
-import type { TaskLogLevel } from "../../types";
 import type { WebhookInput } from "../../webhooks";
 import type { WorkflowNode } from "../../workflows";
 import { BadRequestError } from "../errors";
@@ -298,9 +297,9 @@ export async function logs(queue: Queue, url: URL) {
   const since = positiveOr(url.searchParams.get("since"), 3600);
   const found = await queue.queryLogs({
     task: url.searchParams.get("task") ?? undefined,
-    // Cast rather than validate: an unknown ?level= is untrusted input that must
-    // filter to nothing, which is exactly what the native filter already does.
-    level: (url.searchParams.get("level") ?? undefined) as TaskLogLevel | undefined,
+    // Unvalidated on purpose: an unknown ?level= must filter to nothing, which is
+    // exactly what the native filter does.
+    level: url.searchParams.get("level") ?? undefined,
     sinceMs: Date.now() - since * 1000,
     limit: num(url, "limit") ?? 100,
   });

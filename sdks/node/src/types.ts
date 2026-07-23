@@ -45,6 +45,13 @@ export const DISPATCH_ORDERS: readonly DispatchOrder[] = ["fifo", "lifo"];
  */
 export type TaskLogLevel = "debug" | "info" | "warning" | "error" | "critical" | "result";
 
+/**
+ * A task-log level as a *filter*: any string is accepted, because an unrecognized
+ * value must filter to nothing rather than fail — filters usually arrive from a
+ * dashboard query string. The union still autocompletes the known levels.
+ */
+export type TaskLogLevelFilter = TaskLogLevel | (string & {});
+
 /** Every task-log level, for runtime validation. */
 export const TASK_LOG_LEVELS: readonly TaskLogLevel[] = [
   "debug",

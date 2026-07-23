@@ -81,6 +81,7 @@ import type {
   Subscription,
   TaskLog,
   TaskLogLevel,
+  TaskLogLevelFilter,
   TaskMap,
   TaskOptions,
   TopicLogStat,
@@ -1024,7 +1025,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    * `sinceMs` is a Unix-ms lower bound (default: the last hour).
    */
   queryLogs(
-    options: { task?: string; level?: TaskLogLevel; sinceMs?: number; limit?: number } = {},
+    options: { task?: string; level?: TaskLogLevelFilter; sinceMs?: number; limit?: number } = {},
   ): Promise<TaskLog[]> {
     const sinceMs = options.sinceMs ?? Date.now() - 3_600_000;
     return this.native.queryTaskLogs(options.task, options.level, sinceMs, options.limit ?? 100);
