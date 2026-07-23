@@ -11,7 +11,9 @@ class PeriodicInfo:
     """One registered periodic schedule.
 
     ``last_run`` is unset until the schedule first fires. ``last_run`` and
-    ``next_run`` are Unix milliseconds; ``timezone`` is ``None`` for UTC.
+    ``next_run`` are Unix milliseconds. ``timezone`` is whatever the schedule
+    was registered with, so it is ``None`` only when none was given — which
+    means UTC, the same as an explicit ``"UTC"``.
     """
 
     name: str
