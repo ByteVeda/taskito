@@ -282,6 +282,40 @@ describe("ResourcePool", () => {
   });
 });
 
+describe("request-scoped resources in the runtime", () => {
+  it("builds a fresh instance per resolve and disposes each with the task", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    const disposed: number[] = [];
+    rt.register("cursor", {
+      scope: "request",
+      factory: () => ({ id: ++builds }),
+      dispose: (value) => {
+        disposed.push((value as { id: number }).id);
+      },
+    });
+    const scope = rt.createTaskScope();
+    const first = await scope.resolver("cursor");
+    const second = await scope.resolver("cursor");
+    // Unlike task scope, a second resolve is not the cached first one.
+    expect(first).not.toBe(second);
+    expect(builds).toBe(2);
+    await scope.teardown();
+    expect(disposed.sort()).toEqual([1, 2]);
+    expect(rt.metrics().cursor).toEqual({ created: 2, disposed: 2, active: 0 });
+  });
+
+  it("caches a task-scoped resource for the whole task, unlike request scope", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("perTask", { scope: "task", factory: () => ({ id: ++builds }) });
+    const scope = rt.createTaskScope();
+    expect(await scope.resolver("perTask")).toBe(await scope.resolver("perTask"));
+    expect(builds).toBe(1);
+    await scope.teardown();
+  });
+});
+
 describe("pooled resources in the runtime", () => {
   it("checks out one pooled instance per task and returns it on teardown", async () => {
     const rt = new ResourceRuntime();

@@ -57,6 +57,7 @@ export {
   mockResource,
   type PoolOptions,
   type PoolStats,
+  RESOURCE_SCOPES,
   type ResourceContext,
   type ResourceDefinition,
   type ResourceMetrics,

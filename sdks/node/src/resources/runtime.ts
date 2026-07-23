@@ -212,6 +212,24 @@ export class ResourceRuntime {
         });
         return checkout;
       }
+      if (def.scope === "request") {
+        // Fresh on every resolve, never cached: N `useResource()` calls inside one
+        // task yield N instances, each disposed with the task (LIFO, like the rest).
+        const ctx: ResourceContext = {
+          scope: "request",
+          use: <T>(dep: string) => resolve(dep) as Promise<T>,
+        };
+        const counter = this.counter(name);
+        counter.created += 1;
+        const built = Promise.resolve()
+          .then(() => startFactory(def, ctx))
+          .catch((error) => {
+            counter.created -= 1; // a failed build is not a live resource
+            throw error;
+          });
+        this.trackResource(taskTeardown, name, def, built);
+        return built;
+      }
       const cached = taskCache.get(name);
       if (cached) {
         return cached;
