@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 from taskito.events import EventType
 from taskito.workflows.analysis import topological_levels
 from taskito.workflows.saga.context import CompensationContext
+from taskito.workflows.types import NodeStatus
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -258,7 +259,7 @@ class SagaOrchestrator:
                 status = entry[1]
             except (IndexError, TypeError):
                 continue
-            if status not in ("completed", "cache_hit"):
+            if status not in (NodeStatus.COMPLETED.value, NodeStatus.CACHE_HIT.value):
                 continue
             if name in compensation_map:
                 compensable.add(name)

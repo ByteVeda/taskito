@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from taskito.events import EventType
 from taskito.workflows.context import WorkflowContext
+from taskito.workflows.types import NodeStatus, WorkflowCondition, WorkflowState
 
 if TYPE_CHECKING:
     from taskito.workflows.tracker.tracker import WorkflowTracker
@@ -21,6 +22,11 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("taskito.workflows")
+
+# A predecessor gates its successors once it reaches one of these node statuses.
+_PREDECESSOR_TERMINAL = frozenset(
+    {NodeStatus.COMPLETED.value, NodeStatus.FAILED.value, NodeStatus.SKIPPED.value}
+)
 
 
 def build_dag_maps(
@@ -46,13 +52,13 @@ def int_or(value: Any, default: int) -> int:
 
 
 def final_state_to_event(state: str) -> EventType | None:
-    if state == "completed":
+    if state == WorkflowState.COMPLETED.value:
         return EventType.WORKFLOW_COMPLETED
-    if state == "completed_with_failures":
+    if state == WorkflowState.COMPLETED_WITH_FAILURES.value:
         return EventType.WORKFLOW_COMPLETED_WITH_FAILURES
-    if state == "failed":
+    if state == WorkflowState.FAILED.value:
         return EventType.WORKFLOW_FAILED
-    if state == "cancelled":
+    if state == WorkflowState.CANCELLED.value:
         return EventType.WORKFLOW_CANCELLED
     return None
 
@@ -68,7 +74,7 @@ def all_predecessors_terminal(
         if info is None:
             return False
         status = info["status"]
-        if status not in ("completed", "failed", "skipped"):
+        if status not in _PREDECESSOR_TERMINAL:
             return False
     return True
 
@@ -101,12 +107,12 @@ def build_workflow_context(
     for name, info in node_statuses.items():
         status = info["status"]
         statuses[name] = status
-        if status == "completed":
+        if status == NodeStatus.COMPLETED.value:
             success_count += 1
             jid = info.get("job_id")
             if jid:
                 results[name] = tracker._fetch_result(jid)
-        elif status == "failed":
+        elif status == NodeStatus.FAILED.value:
             failure_count += 1
 
     return WorkflowContext(
@@ -136,11 +142,11 @@ def should_execute(
     condition = meta.get("condition")
     pred_statuses = get_predecessor_statuses(tracker, run_id, node_name, config)
 
-    if condition is None or condition == "on_success":
-        return all(s == "completed" for s in pred_statuses.values())
-    if condition == "on_failure":
-        return any(s == "failed" for s in pred_statuses.values())
-    return bool(condition == "always")
+    if condition is None or condition == WorkflowCondition.ON_SUCCESS.value:
+        return all(s == NodeStatus.COMPLETED.value for s in pred_statuses.values())
+    if condition == WorkflowCondition.ON_FAILURE.value:
+        return any(s == NodeStatus.FAILED.value for s in pred_statuses.values())
+    return bool(condition == WorkflowCondition.ALWAYS.value)
 
 
 def skip_and_propagate(
