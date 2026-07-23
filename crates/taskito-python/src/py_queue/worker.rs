@@ -9,6 +9,7 @@ use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{JobResult, ResultOutcome, Scheduler, SchedulerConfig, TaskConfig};
+use taskito_core::storage::records::WorkerStatus;
 use taskito_core::storage::Storage;
 
 use super::PyQueue;
@@ -833,10 +834,11 @@ impl PyQueue {
         ))
     }
 
-    /// Update the status of a worker.
+    /// Update the status of a worker. An unrecognized status reads as active,
+    /// matching what every backend writes at registration.
     pub fn set_worker_status(&self, worker_id: &str, status: &str) -> PyResult<()> {
         self.storage
-            .update_worker_status(worker_id, status)
+            .update_worker_status(worker_id, WorkerStatus::from_wire(status))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 }

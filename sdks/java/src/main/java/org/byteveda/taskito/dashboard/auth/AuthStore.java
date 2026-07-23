@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
 import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.byteveda.taskito.dashboard.support.Json;
@@ -27,7 +26,6 @@ public final class AuthStore {
     public static final String USERS_KEY = "auth:users";
     public static final String SESSION_PREFIX = "auth:session:";
     public static final long DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60;
-
 
     public static final String ENV_ADMIN_USER = "TASKITO_DASHBOARD_ADMIN_USER";
     public static final String ENV_ADMIN_PASSWORD = "TASKITO_DASHBOARD_ADMIN_PASSWORD";
@@ -377,5 +375,4 @@ public final class AuthStore {
             throw DashboardError.badRequest("password must be 8-256 characters");
         }
     }
-
 }

@@ -8,7 +8,7 @@ use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 use crate::storage::records::{
-    NewSubscription, Subscription, Topic, TopicLogStats, TopicMessage, SUBSCRIPTION_MODE_LOG,
+    NewSubscription, Subscription, SubscriptionMode, Topic, TopicLogStats, TopicMessage,
 };
 use crate::storage::SubscriptionBacklogStats;
 
@@ -41,7 +41,7 @@ struct SubEntry {
 }
 
 fn default_mode() -> String {
-    crate::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string()
+    SubscriptionMode::Fanout.as_str().to_string()
 }
 
 /// JSON blob stored in the `topics` hash, field = topic name (so the name is
@@ -57,7 +57,7 @@ impl TopicEntry {
     fn into_topic(self, name: String) -> Topic {
         Topic {
             name,
-            mode: self.mode,
+            mode: SubscriptionMode::from_wire(&self.mode),
             retention_ms: self.retention_ms,
             created_at: self.created_at,
         }
@@ -78,7 +78,7 @@ impl From<SubEntry> for Subscription {
             priority: e.priority,
             max_retries: e.max_retries,
             timeout_ms: e.timeout_ms,
-            mode: e.mode,
+            mode: SubscriptionMode::from_wire(&e.mode),
             cursor: e.cursor,
         }
     }
@@ -157,7 +157,7 @@ impl RedisStorage {
             priority: sub.priority,
             max_retries: sub.max_retries,
             timeout_ms: sub.timeout_ms,
-            mode: sub.mode.clone(),
+            mode: sub.mode.as_str().to_string(),
             cursor: None,
         };
         let blob_key = self.key(&["sub", &sub.topic, &sub.subscription_name]);
@@ -616,7 +616,7 @@ impl RedisStorage {
         };
         let entry: SubEntry = serde_json::from_str(&data)?;
         // A fan-out sub must never read a mixed topic's log.
-        if entry.mode != SUBSCRIPTION_MODE_LOG {
+        if !SubscriptionMode::from_wire(&entry.mode).is_log() {
             return Ok(Vec::new());
         }
 
@@ -656,7 +656,7 @@ impl RedisStorage {
         };
         let mut entry: SubEntry = serde_json::from_str(&data)?;
         // Only a log subscription has a cursor to advance.
-        if entry.mode != SUBSCRIPTION_MODE_LOG {
+        if !SubscriptionMode::from_wire(&entry.mode).is_log() {
             return Ok(false);
         }
 
@@ -681,7 +681,7 @@ impl RedisStorage {
         let now = crate::job::now_millis();
 
         let mut out = Vec::new();
-        for sub in subs.into_iter().filter(|s| s.mode == SUBSCRIPTION_MODE_LOG) {
+        for sub in subs.into_iter().filter(|s| s.mode.is_log()) {
             let start = match &sub.cursor {
                 Some(cursor) => format!("({cursor}"),
                 None => "-".to_string(),
@@ -721,7 +721,7 @@ impl RedisStorage {
         for sub in self
             .list_subscriptions()?
             .into_iter()
-            .filter(|s| s.mode == SUBSCRIPTION_MODE_LOG)
+            .filter(|s| s.mode.is_log())
         {
             by_topic.entry(sub.topic.clone()).or_default().push(sub);
         }
@@ -859,7 +859,12 @@ impl RedisStorage {
 
     /// Declare a topic (idempotent). Stored as a field in the `topics` hash;
     /// re-declaring preserves the original `created_at`.
-    pub fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+    pub fn declare_topic(
+        &self,
+        name: &str,
+        mode: SubscriptionMode,
+        retention_ms: Option<i64>,
+    ) -> Result<()> {
         crate::pubsub::validate_topic_declaration(mode, retention_ms)?;
         let mut conn = self.conn()?;
         let key = self.key(&["topics"]);
@@ -873,7 +878,7 @@ impl RedisStorage {
             None => crate::job::now_millis(),
         };
         let entry = TopicEntry {
-            mode: mode.to_string(),
+            mode: mode.as_str().to_string(),
             retention_ms,
             created_at,
         };
@@ -938,7 +943,7 @@ impl RedisStorage {
         let Some(data): Option<String> = conn.get(&blob_key).map_err(map_err)? else {
             return Ok(Vec::new());
         };
-        if serde_json::from_str::<SubEntry>(&data)?.mode != SUBSCRIPTION_MODE_LOG {
+        if !SubscriptionMode::from_wire(&serde_json::from_str::<SubEntry>(&data)?.mode).is_log() {
             return Ok(Vec::new());
         }
 

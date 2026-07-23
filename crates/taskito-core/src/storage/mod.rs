@@ -731,7 +731,7 @@ macro_rules! impl_storage {
             fn declare_topic(
                 &self,
                 name: &str,
-                mode: &str,
+                mode: $crate::storage::records::SubscriptionMode,
                 retention_ms: Option<i64>,
             ) -> $crate::error::Result<()> {
                 self.declare_topic(name, mode, retention_ms)
@@ -893,7 +893,7 @@ macro_rules! impl_storage {
             fn update_worker_status(
                 &self,
                 worker_id: &str,
-                status: &str,
+                status: $crate::storage::records::WorkerStatus,
             ) -> $crate::error::Result<()> {
                 self.update_worker_status(worker_id, status)
             }
@@ -1476,7 +1476,12 @@ impl Storage for StorageBackend {
     fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
         delegate!(self, purge_topic_messages, now, limit)
     }
-    fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+    fn declare_topic(
+        &self,
+        name: &str,
+        mode: records::SubscriptionMode,
+        retention_ms: Option<i64>,
+    ) -> Result<()> {
         delegate!(self, declare_topic, name, mode, retention_ms)
     }
     fn get_topic(&self, name: &str) -> Result<Option<records::Topic>> {
@@ -1634,7 +1639,7 @@ impl Storage for StorageBackend {
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
         delegate!(self, heartbeat, worker_id, resource_health)
     }
-    fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
+    fn update_worker_status(&self, worker_id: &str, status: records::WorkerStatus) -> Result<()> {
         delegate!(self, update_worker_status, worker_id, status)
     }
     fn list_workers(&self) -> Result<Vec<records::WorkerInfo>> {

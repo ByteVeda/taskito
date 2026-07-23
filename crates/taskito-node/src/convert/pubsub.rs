@@ -86,7 +86,7 @@ pub struct JsTopic {
 pub fn topic_to_js(topic: Topic) -> JsTopic {
     JsTopic {
         name: topic.name,
-        mode: topic.mode,
+        mode: topic.mode.as_str().to_string(),
         retention_ms: topic.retention_ms,
         created_at: topic.created_at,
     }

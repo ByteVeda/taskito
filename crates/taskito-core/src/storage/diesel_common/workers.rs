@@ -22,12 +22,16 @@ macro_rules! impl_diesel_worker_ops {
             }
 
             /// Update the status of a worker.
-            pub fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
+            pub fn update_worker_status(
+                &self,
+                worker_id: &str,
+                status: $crate::storage::records::WorkerStatus,
+            ) -> Result<()> {
                 let mut conn = self.conn()?;
 
                 diesel::update(workers::table)
                     .filter(workers::worker_id.eq(worker_id))
-                    .set(workers::status.eq(status))
+                    .set(workers::status.eq(status.as_str()))
                     .execute(&mut conn)?;
 
                 Ok(())

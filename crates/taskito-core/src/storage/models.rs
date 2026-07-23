@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::records::{
     CircuitBreakerState, JobError, LockInfo, PeriodicTask, RateLimitState, ReplayEntry,
-    Subscription, TaskLogEntry, TaskMetric, Topic, TopicMessage, WorkerInfo,
+    Subscription, SubscriptionMode, TaskLogEntry, TaskMetric, Topic, TopicMessage, WorkerInfo,
 };
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
@@ -740,7 +740,7 @@ impl From<SubscriptionRow> for Subscription {
             priority: r.priority,
             max_retries: r.max_retries,
             timeout_ms: r.timeout_ms,
-            mode: r.mode,
+            mode: SubscriptionMode::from_wire(&r.mode),
             cursor: r.cursor,
         }
     }
@@ -764,7 +764,7 @@ impl From<TopicRow> for Topic {
     fn from(r: TopicRow) -> Self {
         Topic {
             name: r.name,
-            mode: r.mode,
+            mode: SubscriptionMode::from_wire(&r.mode),
             retention_ms: r.retention_ms,
             created_at: r.created_at,
         }

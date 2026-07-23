@@ -60,11 +60,15 @@ impl RedisStorage {
     }
 
     /// Set a worker's status string.
-    pub fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
+    pub fn update_worker_status(
+        &self,
+        worker_id: &str,
+        status: crate::storage::records::WorkerStatus,
+    ) -> Result<()> {
         let mut conn = self.conn()?;
         let wkey = self.key(&["worker", worker_id]);
 
-        conn.hset::<_, _, _, ()>(&wkey, "status", status)
+        conn.hset::<_, _, _, ()>(&wkey, "status", status.as_str())
             .map_err(map_err)?;
 
         Ok(())

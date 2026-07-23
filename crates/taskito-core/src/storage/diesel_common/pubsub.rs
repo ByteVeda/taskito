@@ -210,7 +210,7 @@ macro_rules! impl_diesel_pubsub_ops {
                     .filter(topic_subscriptions::subscription_name.eq(subscription_name))
                     .filter(
                         topic_subscriptions::mode
-                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                            .eq($crate::storage::records::SubscriptionMode::Log.as_str()),
                     )
                     .select(topic_subscriptions::cursor)
                     .first(&mut conn)
@@ -250,7 +250,7 @@ macro_rules! impl_diesel_pubsub_ops {
                         .filter(topic_subscriptions::subscription_name.eq(subscription_name))
                         .filter(
                             topic_subscriptions::mode
-                                .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                                .eq($crate::storage::records::SubscriptionMode::Log.as_str()),
                         )
                         .filter(
                             topic_subscriptions::cursor
@@ -271,7 +271,7 @@ macro_rules! impl_diesel_pubsub_ops {
                 let subs: Vec<(String, String, Option<String>)> = topic_subscriptions::table
                     .filter(
                         topic_subscriptions::mode
-                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                            .eq($crate::storage::records::SubscriptionMode::Log.as_str()),
                     )
                     .select((
                         topic_subscriptions::topic,
@@ -322,7 +322,7 @@ macro_rules! impl_diesel_pubsub_ops {
                 let subs: Vec<(String, Option<String>)> = topic_subscriptions::table
                     .filter(
                         topic_subscriptions::mode
-                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                            .eq($crate::storage::records::SubscriptionMode::Log.as_str()),
                     )
                     .select((topic_subscriptions::topic, topic_subscriptions::cursor))
                     .load(&mut conn)?;
@@ -393,7 +393,7 @@ macro_rules! impl_diesel_pubsub_ops {
                         let log_subs: Vec<(String, String)> = topic_subscriptions::table
                             .filter(
                                 topic_subscriptions::mode
-                                    .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                                    .eq($crate::storage::records::SubscriptionMode::Log.as_str()),
                             )
                             .select((
                                 topic_subscriptions::topic,
@@ -504,7 +504,7 @@ macro_rules! impl_diesel_pubsub_ops {
                     .filter(topic_subscriptions::subscription_name.eq(subscription_name))
                     .filter(
                         topic_subscriptions::mode
-                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                            .eq($crate::storage::records::SubscriptionMode::Log.as_str()),
                     )
                     .select(topic_subscriptions::subscription_name)
                     .first::<String>(&mut conn)

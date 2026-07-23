@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
-use taskito_core::storage::records::NewSubscription;
+use taskito_core::storage::records::{NewSubscription, SubscriptionMode};
 use taskito_core::storage::Storage;
 
 use super::PyQueue;
@@ -80,7 +80,7 @@ impl PyQueue {
             priority,
             max_retries,
             timeout_ms,
-            mode: mode.to_string(),
+            mode: SubscriptionMode::from_wire(mode),
         };
         self.storage
             .register_subscription(&row)
@@ -272,6 +272,7 @@ impl PyQueue {
         retention_ms: Option<i64>,
     ) -> PyResult<()> {
         let storage = &self.storage;
+        let mode = SubscriptionMode::from_wire(mode);
         py.detach(|| storage.declare_topic(name, mode, retention_ms))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
@@ -283,7 +284,14 @@ impl PyQueue {
             .detach(|| storage.list_declared_topics())
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
             .into_iter()
-            .map(|t| (t.name, t.mode, t.retention_ms, t.created_at))
+            .map(|t| {
+                (
+                    t.name,
+                    t.mode.as_str().to_string(),
+                    t.retention_ms,
+                    t.created_at,
+                )
+            })
             .collect())
     }
 
