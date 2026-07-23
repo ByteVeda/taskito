@@ -30,7 +30,7 @@ depends_on = ["config"]
 
 [resources.session]
 factory = "myapp.resources:create_session"
-scope = "task"
+scope = "pooled"
 pool_size = 20
 pool_min = 5
 acquire_timeout = 5.0
@@ -65,20 +65,21 @@ pip install tomli
 | `health_check` | string | — | Import path to the health check callable. |
 | `health_check_interval` | float | `0.0` | Seconds between health checks. `0` disables. |
 | `max_recreation_attempts` | int | `3` | Max recreation attempts on health failure. |
-| `scope` | string | `"worker"` | `"worker"`, `"task"`, `"thread"`, or `"request"`. |
+| `scope` | string | `"worker"` | `"worker"`, `"thread"`, `"task"`, or `"pooled"`. |
 | `depends_on` | list[string] | `[]` | Resource names this one depends on. |
-| `pool_size` | int | `4` | Task scope: max concurrent instances. |
-| `pool_min` | int | `0` | Task scope: pre-warmed instances at startup. |
-| `acquire_timeout` | float | `10.0` | Task scope: seconds to wait for a pool instance. |
-| `max_lifetime` | float | `3600.0` | Task scope: max seconds an instance lives. |
-| `idle_timeout` | float | `300.0` | Task scope: max idle seconds before eviction. |
+| `pool_size` | int | `4` | Pooled scope: max concurrent instances. |
+| `pool_min` | int | `0` | Pooled scope: pre-warmed instances at startup. |
+| `acquire_timeout` | float | `10.0` | Pooled scope: seconds to wait for a pool instance. |
+| `max_lifetime` | float | `3600.0` | Pooled scope: max seconds an instance lives. |
+| `idle_timeout` | float | `300.0` | Pooled scope: max idle seconds before eviction. |
 | `reloadable` | bool | `false` | Allow hot reload via SIGHUP or CLI. |
 | `frozen` | bool | `false` | Wrap instance in a read-only wrapper. |
 
 ## Pool configuration
 
-Pool parameters apply only to task-scoped resources (`scope = "task"`).
-They control the bounded pool that manages concurrent instances.
+Pool parameters apply only to pooled resources (`scope = "pooled"`); setting
+`pool_size` or `pool_min` on any other scope raises. They control the bounded
+pool that manages concurrent instances.
 
 | Parameter | Default | Description |
 |---|---|---|

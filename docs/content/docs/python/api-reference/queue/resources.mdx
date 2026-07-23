@@ -17,7 +17,7 @@ Methods for the worker resource system and distributed locking.
     health_check: Callable | None = None,
     health_check_interval: float = 0.0,
     max_recreation_attempts: int = 3,
-    scope: str = "worker",
+    scope: ResourceScope | str = ResourceScope.WORKER,
     pool_size: int | None = None,
     pool_min: int = 0,
     acquire_timeout: float = 10.0,
@@ -38,9 +38,9 @@ Decorator to register a resource factory initialized at worker startup.
 | `health_check` | `Callable \| None` | `None` | Called periodically; returns truthy if healthy. |
 | `health_check_interval` | `float` | `0.0` | Seconds between health checks (0 = disabled). |
 | `max_recreation_attempts` | `int` | `3` | Max times to recreate on health failure. |
-| `scope` | `str` | `"worker"` | Lifetime scope: `"worker"`, `"task"`, `"thread"`, or `"request"`. |
-| `pool_size` | `int \| None` | `None` | Pool capacity for task-scoped resources (default = worker thread count). |
-| `pool_min` | `int` | `0` | Pre-warmed instances for task-scoped resources. |
+| `scope` | `ResourceScope \| str` | `WORKER` | Lifetime: `WORKER`, `THREAD`, `TASK` (fresh per task), or `POOLED` (pool checkout). |
+| `pool_size` | `int \| None` | `None` | Pool capacity; `POOLED` scope only (default = worker thread count). |
+| `pool_min` | `int` | `0` | Pre-warmed instances; `POOLED` scope only. |
 | `acquire_timeout` | `float` | `10.0` | Max seconds to wait for a pool instance. |
 | `max_lifetime` | `float` | `3600.0` | Max seconds a pooled instance can live. |
 | `idle_timeout` | `float` | `300.0` | Max idle seconds before pool eviction. |
@@ -93,7 +93,7 @@ queue.resource_status() -> list[dict]
 ```
 
 Return per-resource status. Each entry contains: `name`, `scope`, `health`,
-`init_duration_ms`, `recreations`, `depends_on`. Task-scoped entries also
+`init_duration_ms`, `recreations`, `depends_on`. Pooled entries also
 include `pool` stats.
 
 ### `queue.register_type()`

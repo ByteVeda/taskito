@@ -9,12 +9,24 @@ from typing import Any
 
 
 class ResourceScope(Enum):
-    """Lifecycle scope for a resource instance."""
+    """Lifetime of a resource instance. Names and wire forms are shared across SDKs.
 
-    WORKER = "worker"  # shared across all tasks, lives for worker lifetime
-    TASK = "task"  # acquired per-task from a pool, returned after
-    THREAD = "thread"  # one instance per worker thread, created lazily
-    REQUEST = "request"  # fresh instance per task, torn down after
+    ``REQUEST`` (a fresh instance per *resolve*) has no Python equivalent:
+    resources arrive by injection, resolved once per task, so there is no second
+    resolve to build for.
+    """
+
+    WORKER = "worker"
+    """Built once, lazily, and shared by every task on the worker."""
+
+    THREAD = "thread"
+    """Built once per worker thread and shared by every task on that thread."""
+
+    TASK = "task"
+    """Built fresh per task and torn down when the task ends."""
+
+    POOLED = "pooled"
+    """Checked out of a bounded pool for the task's duration, returned at task end."""
 
 
 @dataclass
@@ -29,7 +41,7 @@ class ResourceDefinition:
     max_recreation_attempts: int = 3
     scope: ResourceScope = ResourceScope.WORKER
     depends_on: list[str] = field(default_factory=list)
-    # Pool config (task scope only)
+    # Pool config (POOLED scope only)
     pool_size: int | None = None  # None = worker thread count
     pool_min: int = 0
     acquire_timeout: float = 10.0
@@ -38,3 +50,15 @@ class ResourceDefinition:
     # Behavior flags
     reloadable: bool = False
     frozen: bool = False
+
+    def __post_init__(self) -> None:
+        # Pool tuning on a non-pooled scope is the one way the 0.21 rename can go
+        # wrong silently: `scope=TASK` used to mean "checkout from a pool", and now
+        # means "fresh per task". Reject it here so that misread fails loudly.
+        if self.scope is not ResourceScope.POOLED and (
+            self.pool_size is not None or self.pool_min
+        ):
+            raise ValueError(
+                f"resource {self.name!r}: pool_size/pool_min require "
+                f"scope={ResourceScope.POOLED}, got scope={self.scope}"
+            )

@@ -1,6 +1,6 @@
 ---
 title: Dependency Injection
-description: "worker_resource decorator, scopes (worker/task/thread/request), dependencies, teardown, health checks."
+description: "worker_resource decorator, scopes (worker/thread/task/pooled), dependencies, teardown, health checks."
 ---
 
 import { Tab, Tabs } from "fumadocs-ui/components/tabs";
@@ -13,7 +13,7 @@ entirely in the worker process and are never put in the queue.
   Celery has no first-class DI, so you typically open a connection at import time
   (`db = create_engine(...)`) and share that global. Worker resources replace that
   pattern: taskito creates one instance per worker, scopes it
-  (worker / task / thread / request), injects it by name, and tears it down on
+  (worker / thread / task / pooled), injects it by name, and tears it down on
   shutdown — no import-time side effects, and clean per-scope lifecycles.
 </Callout>
 
@@ -55,11 +55,11 @@ tasks.
 | `health_check_interval` | `0.0` | Seconds between health checks. `0` disables checking. |
 | `max_recreation_attempts` | `3` | Max times to recreate after consecutive health failures. |
 | `scope` | `"worker"` | Lifetime scope — see Resource scopes below. |
-| `pool_size` | `None` | Task scope: max concurrent instances (default: 4). |
-| `pool_min` | `0` | Task scope: pre-warmed instances at startup. |
-| `acquire_timeout` | `10.0` | Task scope: seconds to wait for an available instance. |
-| `max_lifetime` | `3600.0` | Task scope: max seconds an instance can live. |
-| `idle_timeout` | `300.0` | Task scope: max idle seconds before eviction. |
+| `pool_size` | `None` | Pooled scope: max concurrent instances (default: 4). |
+| `pool_min` | `0` | Pooled scope: pre-warmed instances at startup. |
+| `acquire_timeout` | `10.0` | Pooled scope: seconds to wait for an available instance. |
+| `max_lifetime` | `3600.0` | Pooled scope: max seconds an instance can live. |
+| `idle_timeout` | `300.0` | Pooled scope: max idle seconds before eviction. |
 | `reloadable` | `False` | Allow hot reload via SIGHUP or CLI. |
 | `frozen` | `False` | Wrap instance in a read-only wrapper (see [Configuration](/python/guides/resources/configuration#frozen-resources)). |
 
@@ -105,13 +105,17 @@ over injection.
 | Scope | Lifetime | Use case |
 |---|---|---|
 | `"worker"` (default) | Entire worker process | Database connection pools, shared caches |
-| `"task"` | Acquired per-task from a pool, returned after | Short-lived connections with limited concurrency |
 | `"thread"` | One instance per worker thread, created lazily | Thread-unsafe objects that must not be shared |
-| `"request"` | Fresh instance per task, torn down after | Stateful per-request objects |
+| `"task"` | Fresh instance per task, torn down after | Stateful per-task objects |
+| `"pooled"` | Checked out of a bounded pool per task, returned after | Short-lived connections with limited concurrency |
+
+Scope names and their meanings are shared across SDKs. There is no `"request"`
+scope (a fresh instance per *resolve*) here: resources arrive by injection,
+resolved once per task, so there is no second resolve to build for.
 
 ```python
-# Task scope: each task gets its own session from a pool of up to 10
-@queue.worker_resource("db_session", scope="task", pool_size=10)
+# Pooled scope: each task checks out a session from a pool of up to 10
+@queue.worker_resource("db_session", scope="pooled", pool_size=10)
 def create_session(db):
     return db()  # db must be a worker-scoped resource
 
@@ -120,15 +124,25 @@ def create_session(db):
 def create_cache():
     return {}
 
-# Request scope: a fresh instance for every task, torn down right after
-@queue.worker_resource("audit_context", scope="request")
+# Task scope: a fresh instance for every task, torn down right after
+@queue.worker_resource("audit_context", scope="task")
 def create_audit_context():
     return AuditContext(started_at=time.time())
 ```
 
 Pool configuration parameters (`pool_size`, `pool_min`, `acquire_timeout`,
-`max_lifetime`, `idle_timeout`) only apply to task-scoped resources. See
+`max_lifetime`, `idle_timeout`) only apply to pooled resources — passing
+`pool_size` or `pool_min` with any other scope raises. See
 [Configuration](/python/guides/resources/configuration) for details.
+
+<Callout type="warn">
+  **Breaking rename.** `"task"` used to mean *checked out of a pool* and
+  `"request"` meant *fresh per task*; they are now `"pooled"` and `"task"`, the
+  names the other SDKs already used. `scope="request"` raises. `scope="task"`
+  still resolves — but now builds per task instead of pooling, so move pooled
+  resources to `scope="pooled"`. Pool settings on a non-pooled scope raise, which
+  catches the common case.
+</Callout>
 
 ## Dependencies
 

@@ -199,10 +199,12 @@ class TestNoProxy:
 
 class TestResourceScopes:
     def test_all_scopes_exist(self) -> None:
+        """Names and wire forms are the cross-SDK contract."""
         assert ResourceScope.WORKER.value == "worker"
-        assert ResourceScope.TASK.value == "task"
         assert ResourceScope.THREAD.value == "thread"
-        assert ResourceScope.REQUEST.value == "request"
+        assert ResourceScope.TASK.value == "task"
+        assert ResourceScope.POOLED.value == "pooled"
+        assert [s.value for s in ResourceScope] == ["worker", "thread", "task", "pooled"]
 
     def test_pool_config(self) -> None:
         cfg = PoolConfig(pool_size=5, pool_min=2)
@@ -386,7 +388,7 @@ class TestRuntimeScopeAware:
         defn = ResourceDefinition(
             name="req",
             factory=factory,
-            scope=ResourceScope.REQUEST,
+            scope=ResourceScope.TASK,
         )
         rt = ResourceRuntime({"req": defn})
         rt.initialize()
@@ -452,7 +454,7 @@ class TestRuntimeScopeAware:
         defn = ResourceDefinition(
             name="db",
             factory=lambda: {},
-            scope=ResourceScope.TASK,
+            scope=ResourceScope.POOLED,
             pool_size=5,
         )
         rt = ResourceRuntime({"db": defn})
