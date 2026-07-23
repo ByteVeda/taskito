@@ -25,9 +25,18 @@ class ClosedSetEnumTest {
     }
 
     @Test
+    void storageBackendRoundTripsItsWireForm() {
+        assertEquals("sqlite", StorageBackend.SQLITE.wire());
+        assertEquals("postgres", StorageBackend.POSTGRES.wire());
+        assertEquals(StorageBackend.REDIS, StorageBackend.fromWire("redis"));
+        assertEquals(StorageBackend.SQLITE, StorageBackend.fromWire("SQLITE"));
+    }
+
+    @Test
     void unknownWireFormIsRejected() {
         assertThrows(SerializationException.class, () -> DispatchOrder.fromWire("sideways"));
         assertThrows(SerializationException.class, () -> TaskLogLevel.fromWire("verbose"));
         assertThrows(SerializationException.class, () -> TaskLogLevel.fromWire(null));
+        assertThrows(SerializationException.class, () -> StorageBackend.fromWire("mysql"));
     }
 }
