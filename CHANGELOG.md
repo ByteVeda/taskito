@@ -5,6 +5,32 @@ All notable changes to taskito are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
 
+## Unreleased
+
+### Changed
+
+- **BREAKING (Python): resource scopes renamed to match the other SDKs.**
+  `ResourceScope.TASK` meant *checked out of a bounded pool* and `REQUEST` meant *fresh per
+  task* — the reverse of what Java and Node call those names, so the same `scope="task"` code
+  behaved differently per SDK. Python now uses `POOLED` (was `TASK`) and `TASK` (was `REQUEST`);
+  `REQUEST` is gone, and `scope="request"` raises. `scope="task"` still resolves but now builds
+  per task instead of pooling, so pooled resources must move to `scope="pooled"` — passing
+  `pool_size`/`pool_min` with any other scope now raises, which catches that case.
+- Closed-set parameters across the core and all three SDKs take enums instead of bare strings:
+  built-in proxy ids, interception mode, predicate `on_false`, log-consumer `on_error`, gate
+  `on_timeout`, workflow diagram format, fan-out strategy, dispatch order, task-log level,
+  workflow run state, dashboard role, subscription mode, and worker status. Wire and stored
+  values are unchanged, and existing string callers keep working (Java keeps its `String`
+  overloads, deprecated).
+
+### Added
+
+- **Node `request` resource scope.** A fresh instance on every `useResource()` call, each
+  disposed when the task ends — matching the Java scope of the same name.
+- Job outcome events report how long the task ran: `durationMs()` on Java's `OutcomeEvent`,
+  `durationMs` on Node's, and `duration_ms` on Python's job event payloads. Java also gains
+  `NodeSnapshot.durationMs()` / `compensationDurationMs()` and `TaskContext.elapsedMs()`.
+
 ## 0.21.0
 
 Overload-controls and retention release. The queue gains admission and load-shedding controls,
