@@ -1176,6 +1176,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
         private final java.util.Set<String> queues;
         private final String workerId;
         private final Map<Long, String> inFlight = new ConcurrentHashMap<>();
+        // Dispatch time per in-flight token, so outcomes report a duration like
+        // the native runtime does.
+        private final Map<Long, Long> dispatchedAt = new ConcurrentHashMap<>();
         private volatile boolean running = true;
         private Thread loop;
 
@@ -1197,6 +1200,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 while (running && (job = claimNext(queues)) != null) {
                     long token = seq.incrementAndGet();
                     inFlight.put(token, job.id);
+                    dispatchedAt.put(token, System.nanoTime());
                     bridge.onJob(token, job.id, job.taskName, job.payload);
                 }
                 sleep();
@@ -1219,8 +1223,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
             if (job == null) {
                 return;
             }
+            long wallTimeNs = wallTimeOf(token);
             onComplete(job, result);
-            bridge.onOutcome("success", jobId, job.taskName, null, job.retryCount, false);
+            bridge.onOutcome("success", jobId, job.taskName, null, job.retryCount, false, wallTimeNs);
         }
 
         @Override
@@ -1231,8 +1236,10 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 return;
             }
             boolean willRetry = retryable && job.retryCount < job.maxRetries;
+            long wallTimeNs = wallTimeOf(token);
             onFail(job, error, retryable);
-            bridge.onOutcome(willRetry ? "retry" : "dead", jobId, job.taskName, error, job.retryCount, false);
+            bridge.onOutcome(
+                    willRetry ? "retry" : "dead", jobId, job.taskName, error, job.retryCount, false, wallTimeNs);
         }
 
         @Override
@@ -1242,8 +1249,15 @@ public final class InMemoryQueueBackend implements QueueBackend {
             if (job == null) {
                 return;
             }
+            long wallTimeNs = wallTimeOf(token);
             onCancel(job);
-            bridge.onOutcome("cancelled", jobId, job.taskName, null, job.retryCount, false);
+            bridge.onOutcome("cancelled", jobId, job.taskName, null, job.retryCount, false, wallTimeNs);
+        }
+
+        /** Elapsed nanos since this token was dispatched; 0 when it wasn't (unmeasured). */
+        private long wallTimeOf(long token) {
+            Long started = dispatchedAt.remove(token);
+            return started == null ? 0L : System.nanoTime() - started;
         }
 
         @Override

@@ -30,6 +30,15 @@ outcome details: `error` (null on success/cancel), `retryCount` (-1 when not
 applicable), and `timedOut` (which separates a timeout from other failures). A
 listener that throws is caught and logged — it never blocks other listeners.
 
+`durationMs()` reports how long the job ran, as the runtime measured it:
+
+```java
+.on(EventName.SUCCESS, event -> metrics.record(event.taskName, event.durationMs()))
+```
+
+It returns null when nothing measured the run — a job that failed before it ever
+executed, or one the runtime recovered rather than a worker finishing it.
+
 Listeners are add-only and live for the worker's lifetime; there is no
 unsubscribe. Register them before `start()` and let them go away when the
 worker closes.

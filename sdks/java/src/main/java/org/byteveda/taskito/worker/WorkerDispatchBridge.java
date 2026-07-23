@@ -141,9 +141,16 @@ final class WorkerDispatchBridge implements WorkerBridge {
     }
 
     @Override
-    public void onOutcome(String kind, String jobId, String taskName, String error, int retryCount, boolean timedOut) {
+    public void onOutcome(
+            String kind,
+            String jobId,
+            String taskName,
+            String error,
+            int retryCount,
+            boolean timedOut,
+            long wallTimeNs) {
         EventName name = EventName.fromKind(kind);
-        OutcomeEvent event = new OutcomeEvent(name, jobId, taskName, error, retryCount, timedOut);
+        OutcomeEvent event = new OutcomeEvent(name, jobId, taskName, error, retryCount, timedOut, wallTimeNs);
         emitter.emit(event);
         for (Middleware m : disables.resolve(taskName, middleware)) {
             try {

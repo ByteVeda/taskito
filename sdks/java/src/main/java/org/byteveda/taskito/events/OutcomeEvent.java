@@ -9,12 +9,38 @@ public final class OutcomeEvent {
     public final int retryCount;
     public final boolean timedOut;
 
+    /** Execution time the worker measured; 0 when the run wasn't measured. */
+    private final long wallTimeNs;
+
     public OutcomeEvent(EventName name, String jobId, String taskName, String error, int retryCount, boolean timedOut) {
+        this(name, jobId, taskName, error, retryCount, timedOut, 0L);
+    }
+
+    public OutcomeEvent(
+            EventName name,
+            String jobId,
+            String taskName,
+            String error,
+            int retryCount,
+            boolean timedOut,
+            long wallTimeNs) {
         this.name = name;
         this.jobId = jobId;
         this.taskName = taskName;
         this.error = error;
         this.retryCount = retryCount;
         this.timedOut = timedOut;
+        this.wallTimeNs = wallTimeNs;
+    }
+
+    /**
+     * How long the job ran, in milliseconds.
+     *
+     * @return the execution time, or null when nothing measured the run — a job that
+     *     failed before it ever executed, or one the runtime recovered rather than a
+     *     worker finishing it.
+     */
+    public Long durationMs() {
+        return wallTimeNs > 0 ? wallTimeNs / 1_000_000L : null;
     }
 }
