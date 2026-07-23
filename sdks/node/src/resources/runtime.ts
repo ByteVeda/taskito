@@ -232,13 +232,10 @@ export class ResourceRuntime {
       if (def.scope === "request") {
         // Fresh on every resolve, never cached: N `useResource()` calls inside one
         // task yield N instances, each disposed with the task (LIFO, like the rest).
-        // Being uncached is also why a cycle cannot resolve itself the way a task
-        // resource does — there is no pending promise to hand back, so track the
-        // chain and reject instead of recursing forever.
         if (building.has(name)) {
           return Promise.reject(
             new ResourceError(
-              `resource "${name}": request-scope dependency cycle (${[...building, name].join(" -> ")})`,
+              `resource "${name}": dependency cycle (${[...building, name].join(" -> ")})`,
             ),
           );
         }
@@ -258,13 +255,23 @@ export class ResourceRuntime {
         this.trackResource(taskTeardown, name, def, built);
         return built;
       }
+      // A name already in the chain is a cycle: returning its still-pending promise
+      // would deadlock the build on itself rather than recurse, so reject instead.
+      if (building.has(name)) {
+        return Promise.reject(
+          new ResourceError(
+            `resource "${name}": dependency cycle (${[...building, name].join(" -> ")})`,
+          ),
+        );
+      }
       const cached = taskCache.get(name);
       if (cached) {
         return cached;
       }
+      const taskChain = new Set(building).add(name);
       const ctx: ResourceContext = {
         scope: "task",
-        use: <T>(dep: string) => resolve(dep, building) as Promise<T>,
+        use: <T>(dep: string) => resolve(dep, taskChain) as Promise<T>,
       };
       const counter = this.counter(name);
       counter.created += 1;

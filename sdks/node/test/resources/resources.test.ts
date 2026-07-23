@@ -343,6 +343,39 @@ describe("resource scope validation", () => {
     await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
     await scope.teardown();
   });
+
+  it("rejects the reverse mixed-scope cycle, task through request", async () => {
+    // The task branch would otherwise hand back its own pending promise and the
+    // build would await itself forever.
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "task", factory: (ctx) => ctx.use("b") });
+    rt.register("b", { scope: "request", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("rejects a self-referential task resource", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("a", { scope: "task", factory: (ctx) => ctx.use("a") });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("a")).rejects.toThrow(/dependency cycle/);
+    await scope.teardown();
+  });
+
+  it("still shares one task instance across sibling dependents", async () => {
+    // A diamond is not a cycle: the chain is per-path, so the cache still serves
+    // the second dependent.
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("shared", { scope: "task", factory: () => ({ n: ++builds }) });
+    rt.register("x", { scope: "task", factory: (ctx) => ctx.use("shared") });
+    rt.register("y", { scope: "task", factory: (ctx) => ctx.use("shared") });
+    const scope = rt.createTaskScope();
+    expect(await scope.resolver("x")).toBe(await scope.resolver("y"));
+    expect(builds).toBe(1);
+    await scope.teardown();
+  });
 });
 
 describe("pooled resources in the runtime", () => {
