@@ -709,18 +709,21 @@ class TestScopeCoercionAndReload:
         )
         runtime = ResourceRuntime({"conn": defn})
         runtime.initialize()
-        first, release = runtime.acquire_for_task("conn")
-        assert release is not None
-        release()
+        try:
+            first, release = runtime.acquire_for_task("conn")
+            assert release is not None
+            release()
 
-        assert runtime.reload() == {"conn": True}
-        second, release2 = runtime.acquire_for_task("conn")
-        assert release2 is not None
-        release2()
-        # A rebuilt pool hands out a new instance, and nothing leaked into the
-        # singleton map that resolve() would have returned instead.
-        assert second is not first
-        assert "conn" not in runtime._instances
+            assert runtime.reload() == {"conn": True}
+            second, release2 = runtime.acquire_for_task("conn")
+            assert release2 is not None
+            release2()
+            # A rebuilt pool hands out a new instance, and nothing leaked into the
+            # singleton map that resolve() would have returned instead.
+            assert second is not first
+            assert "conn" not in runtime._instances
+        finally:
+            runtime.teardown()
 
     def test_async_task_teardown_is_awaited(self) -> None:
         """A returned coroutine used to be dropped, so async teardowns never ran."""
@@ -734,7 +737,10 @@ class TestScopeCoercionAndReload:
         )
         runtime = ResourceRuntime({"ctx": defn})
         runtime.initialize()
-        _, release = runtime.acquire_for_task("ctx")
-        assert release is not None
-        release()
-        assert torn == ["value"]
+        try:
+            _, release = runtime.acquire_for_task("ctx")
+            assert release is not None
+            release()
+            assert torn == ["value"]
+        finally:
+            runtime.teardown()
