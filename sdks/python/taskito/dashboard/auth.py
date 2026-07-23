@@ -399,7 +399,7 @@ class AuthStore:
         except json.JSONDecodeError:
             return None
         try:
-            session = Session(token=token, **data)
+            session = Session(token=token, **{**data, "role": _role_or_viewer(data.get("role"))})
         except TypeError:
             return None
         if session.is_expired():

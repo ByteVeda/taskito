@@ -47,6 +47,7 @@ class AuthStoreTest {
         assertThrows(DashboardError.class, () -> store.createUser("bad name", "password123", Role.ADMIN));
         assertThrows(DashboardError.class, () -> store.createUser("carol", "short", Role.ADMIN));
         assertThrows(DashboardError.class, () -> store.createUser("carol", "password123", null));
+        assertThrows(DashboardError.class, () -> store.createSession("carol", null));
         // An unknown role is no longer representable at the call site; a stored one
         // still has to fail closed.
         assertEquals(Role.VIEWER, Role.orViewer("superuser"));

@@ -204,6 +204,9 @@ public final class AuthStore {
     }
 
     public Session createSession(String username, Role role, long ttlSeconds) {
+        if (role == null) {
+            throw DashboardError.badRequest("invalid role");
+        }
         String token = Tokens.session();
         String csrf = Tokens.session();
         long now = nowSeconds();

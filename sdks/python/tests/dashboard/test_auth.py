@@ -21,7 +21,9 @@ import pytest
 from taskito import Queue
 from taskito.dashboard import _make_handler
 from taskito.dashboard.auth import (
+    SESSION_PREFIX,
     AuthStore,
+    Role,
     bootstrap_admin_from_env,
     hash_password,
     verify_password,
@@ -140,6 +142,27 @@ def test_create_and_get_session(queue: Queue) -> None:
     assert fetched.username == "alice"
     assert fetched.csrf_token == session.csrf_token
     assert not fetched.is_expired()
+
+
+def test_session_role_is_the_enum(queue: Queue) -> None:
+    store = AuthStore(queue)
+    session = store.create_session(store.create_user("alice", "hunter2-secret"))
+    fetched = store.get_session(session.token)
+    assert fetched is not None
+    assert fetched.role is Role.ADMIN
+
+
+def test_unreadable_persisted_role_falls_back_to_viewer(queue: Queue) -> None:
+    """A stored role nothing recognizes must not be handed back as-is."""
+    store = AuthStore(queue)
+    session = store.create_session(store.create_user("alice", "hunter2-secret"))
+    raw = json.loads(queue.get_setting(SESSION_PREFIX + session.token) or "{}")
+    raw["role"] = "superuser"
+    queue.set_setting(SESSION_PREFIX + session.token, json.dumps(raw))
+
+    fetched = store.get_session(session.token)
+    assert fetched is not None
+    assert fetched.role is Role.VIEWER
 
 
 def test_get_session_unknown_token_returns_none(queue: Queue) -> None:
