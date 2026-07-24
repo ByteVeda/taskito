@@ -5,9 +5,11 @@ import java.util.Map;
 import org.byteveda.taskito.errors.SerializationException;
 
 /**
- * Every event the runtime can emit, each carrying its dotted cross-SDK wire name
- * (e.g. {@code job.completed}). The first four constants are the terminal job
- * outcomes; their ordinals are stable for compatibility with persisted data.
+ * The cross-SDK event taxonomy, each constant carrying its dotted wire name
+ * (e.g. {@code job.completed}). Most events are emitted by this runtime; a few
+ * are reserved contract entries not yet emitted here (noted per constant). The
+ * first four constants are the terminal job outcomes; their ordinals are stable
+ * for compatibility with persisted data.
  */
 public enum EventName {
     /** A job finished successfully ({@code job.completed}). */
@@ -43,7 +45,11 @@ public enum EventName {
     WORKFLOW_SUBMITTED("workflow.submitted"),
     /** A workflow run completed with every node succeeding ({@code workflow.completed}). */
     WORKFLOW_COMPLETED("workflow.completed"),
-    /** A workflow run finished with some failed nodes ({@code workflow.completed_with_failures}). */
+    /**
+     * A workflow run finished with some failed nodes
+     * ({@code workflow.completed_with_failures}). Reserved: part of the
+     * cross-SDK contract; this runtime's finalizer reports completed/failed today.
+     */
     WORKFLOW_COMPLETED_WITH_FAILURES("workflow.completed_with_failures"),
     /** A workflow run failed ({@code workflow.failed}). */
     WORKFLOW_FAILED("workflow.failed"),
