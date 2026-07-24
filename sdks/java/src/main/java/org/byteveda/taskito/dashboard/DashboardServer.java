@@ -384,6 +384,7 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/workflows/runs/([^/]+)", req -> workflows.run(req.param(0)));
 
         // Settings KV
+        r.get("/api/retention/dry-run", req -> retention.retentionDryRun());
         r.get("/api/retention", req -> retention.retention());
         r.get("/api/settings", req -> settingsApi.list());
         r.get("/api/settings/(.+)", req -> settingsApi.get(req.param(0)));

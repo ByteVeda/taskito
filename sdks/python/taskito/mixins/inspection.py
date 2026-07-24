@@ -9,7 +9,7 @@ from typing import Any
 from taskito.mixins._shared import _UNSET
 from taskito.pagination import Page
 from taskito.result import JobResult
-from taskito.retention import EffectiveRetention
+from taskito.retention import EffectiveRetention, Retention, RetentionPreview
 
 
 class QueueInspectionMixin:
@@ -275,6 +275,20 @@ class QueueInspectionMixin:
         if raw is None:
             return None
         return EffectiveRetention._from_json(raw)
+
+    def dry_run_retention(self, retention: Retention | None = None) -> RetentionPreview:
+        """Preview what a retention purge would delete, without deleting anything.
+
+        Counts the rows each history table's purge would remove right now. With
+        no argument the preview uses **this queue's** configured (or
+        default-recommended) windows; pass candidate ``retention`` windows to
+        size a window before committing to it — no worker reconfiguration needed.
+        The counts are a point-in-time snapshot; nothing is deleted. Unlike
+        :meth:`effective_retention`, this runs in-process against the live data,
+        so it never returns ``None``.
+        """
+        windows = retention._as_map() if retention is not None else None
+        return RetentionPreview._from_json(self._inner.dry_run_retention(windows))
 
 
 def _aggregate_metrics(raw: list[dict]) -> dict[str, Any]:

@@ -34,6 +34,7 @@ import org.byteveda.taskito.model.Page;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
+import org.byteveda.taskito.model.RetentionPreview;
 import org.byteveda.taskito.model.StorageBackend;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
@@ -62,6 +63,7 @@ import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Retention;
 import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.Workflow;
 import org.byteveda.taskito.workflows.WorkflowRun;
@@ -313,6 +315,27 @@ public interface Taskito extends AutoCloseable {
      * @return the published policy, or empty if unreported
      */
     Optional<EffectiveRetention> effectiveRetention();
+
+    /**
+     * Preview what a retention purge would delete right now, without deleting
+     * anything, following the policy the elected cleaner reported for this
+     * namespace — recommended defaults only when no cleaner has swept yet. The
+     * counts are a point-in-time snapshot; nothing is deleted.
+     *
+     * @return the per-table counts a purge would remove
+     */
+    RetentionPreview dryRunRetention();
+
+    /**
+     * Preview what a retention purge would delete under candidate windows,
+     * without deleting anything — so a window can be sized before it is set,
+     * with no worker reconfiguration. A {@code null} argument previews the
+     * reported policy, as in {@link #dryRunRetention()}.
+     *
+     * @param retention the candidate windows to preview
+     * @return the per-table counts a purge would remove
+     */
+    RetentionPreview dryRunRetention(Retention retention);
 
     // ── Middleware toggles ──────────────────────────────────────────
 

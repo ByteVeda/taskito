@@ -152,6 +152,51 @@ pub struct QueueStats {
     pub cancelled: i64,
 }
 
+/// Per-table cutoffs a retention dry-run counts against. Each is the
+/// `now - ttl` epoch-ms boundary the matching purge deletes below; `None` means
+/// that table has no window (only its per-entry TTL is swept). Built from the
+/// effective [`RetentionConfig`] via `cutoffs(now)`, mirroring the cutoffs
+/// `auto_cleanup` hands to each purge.
+///
+/// [`RetentionConfig`]: crate::scheduler::retention::RetentionConfig
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RetentionCutoffs {
+    /// Cutoff for `archived_jobs` (terminal jobs), or `None` for no window.
+    pub archived_jobs: Option<i64>,
+    /// Cutoff for `dead_letter`, or `None` for no window.
+    pub dead_letter: Option<i64>,
+    /// Cutoff for `task_logs`, or `None` for no window.
+    pub task_logs: Option<i64>,
+    /// Cutoff for `task_metrics`, or `None` for no window.
+    pub task_metrics: Option<i64>,
+    /// Cutoff for `job_errors`, or `None` for no window.
+    pub job_errors: Option<i64>,
+}
+
+/// Rows a retention purge would delete per history table, as counted by a
+/// read-only dry-run. Every field is the count the matching purge in
+/// `auto_cleanup` would remove under the same cutoffs — nothing is deleted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RetentionCounts {
+    /// Terminal jobs (`archived_jobs`) that would be purged.
+    pub archived_jobs: u64,
+    /// Dead-letter entries that would be purged.
+    pub dead_letter: u64,
+    /// Task-log lines that would be purged.
+    pub task_logs: u64,
+    /// Task-metric rows that would be purged.
+    pub task_metrics: u64,
+    /// Per-attempt job-error rows that would be purged.
+    pub job_errors: u64,
+}
+
+impl RetentionCounts {
+    /// Total rows a purge would delete across every table.
+    pub fn total(&self) -> u64 {
+        self.archived_jobs + self.dead_letter + self.task_logs + self.task_metrics + self.job_errors
+    }
+}
+
 /// Order in which same-priority jobs are dispatched from a queue. Priority
 /// always dominates; this only breaks ties. `Fifo` (oldest-first) is the fair
 /// default; `Lifo` (newest-first) is opt-in for freshness-sensitive workloads
@@ -501,6 +546,13 @@ macro_rules! impl_storage {
             }
             fn stats(&self) -> $crate::error::Result<$crate::storage::QueueStats> {
                 self.stats()
+            }
+            fn count_expired_rows(
+                &self,
+                cutoffs: &$crate::storage::RetentionCutoffs,
+                now: i64,
+            ) -> $crate::error::Result<$crate::storage::RetentionCounts> {
+                self.count_expired_rows(cutoffs, now)
             }
             fn purge_completed(&self, older_than_ms: i64) -> $crate::error::Result<u64> {
                 self.purge_completed(older_than_ms)
@@ -1311,6 +1363,9 @@ impl Storage for StorageBackend {
     }
     fn stats(&self) -> Result<QueueStats> {
         delegate!(self, stats)
+    }
+    fn count_expired_rows(&self, cutoffs: &RetentionCutoffs, now: i64) -> Result<RetentionCounts> {
+        delegate!(self, count_expired_rows, cutoffs, now)
     }
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
         delegate!(self, purge_completed, older_than_ms)

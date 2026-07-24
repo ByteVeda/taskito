@@ -140,6 +140,16 @@ public interface QueueBackend extends AutoCloseable {
         return Optional.empty();
     }
 
+    /**
+     * Preview counts as JSON for the given candidate retention spec (camelCase
+     * seconds), or {@code null} for the recommended defaults. Only the native
+     * backend can count against live storage, so non-native backends do not
+     * support the dry-run.
+     */
+    default String dryRunRetentionJson(String retentionJson) {
+        throw new UnsupportedOperationException("retention dry-run requires the native backend");
+    }
+
     // ── Logs ────────────────────────────────────────────────────────
     void writeTaskLog(String jobId, String taskName, String level, String message, String extraOrNull);
 

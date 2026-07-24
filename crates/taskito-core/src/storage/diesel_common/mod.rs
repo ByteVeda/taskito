@@ -11,6 +11,7 @@ mod logs;
 mod metrics;
 mod pubsub;
 pub(crate) mod purge;
+mod retention;
 mod workers;
 
 pub(crate) use archival::impl_diesel_archival_ops;
@@ -20,4 +21,5 @@ pub(crate) use locks::impl_diesel_lock_ops;
 pub(crate) use logs::impl_diesel_log_ops;
 pub(crate) use metrics::impl_diesel_metric_ops;
 pub(crate) use pubsub::impl_diesel_pubsub_ops;
+pub(crate) use retention::impl_diesel_retention_ops;
 pub(crate) use workers::impl_diesel_worker_ops;

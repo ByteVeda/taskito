@@ -129,6 +129,34 @@ table forever. `None` for the whole report means unreported — the first sweep
 publishes it — which is deliberately distinct from retention being disabled
 (`enabled=False`).
 
+### Previewing a purge
+
+Tuning a window without knowing how much it deletes is guesswork.
+`dry_run_retention()` counts, per table, the rows a purge would remove **right
+now** — without deleting anything:
+
+```python
+preview = queue.dry_run_retention()
+print(f"{preview.total} rows would be deleted")
+print(preview.counts["archived_jobs"], preview.counts["task_logs"])
+```
+
+With no argument it previews this queue's configured (or default-recommended)
+windows. Pass candidate windows to size one before committing to it — no worker
+restart needed:
+
+```python
+from taskito import Retention
+
+preview = queue.dry_run_retention(Retention(archived_jobs=3 * 86_400))
+print(f"a 3-day archive window would delete {preview.counts['archived_jobs']} jobs")
+```
+
+The counts are a point-in-time snapshot; nothing is deleted, so it is safe to
+run against production. Unlike `effective_retention()`, it is computed
+in-process against the live data and always returns a result. The async twin is
+`adry_run_retention()`.
+
 ### Cascade cleanup
 
 Manual `purge_completed()` / `purge_dead()` is a blunt delete — it removes a

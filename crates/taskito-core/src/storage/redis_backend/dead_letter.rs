@@ -468,6 +468,54 @@ impl RedisStorage {
         Ok(total)
     }
 
+    /// Count dead-letter entries a purge would remove under `global_cutoff_ms`,
+    /// mirroring [`Self::purge_dead_with_ttl`]'s per-entry/global predicate
+    /// without deleting. Read-only: `ZSCAN` walks the set in bounded batches and
+    /// each entry's blob is inspected exactly as the purge inspects it.
+    pub fn count_expired_dead(&self, global_cutoff_ms: Option<i64>, now: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let dlq_all = self.key(&["dlq", "all"]);
+        let mut total = 0u64;
+
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, flat): (u64, Vec<String>) = redis::cmd("ZSCAN")
+                .arg(&dlq_all)
+                .arg(cursor)
+                .arg("COUNT")
+                .arg(SCAN_BATCH)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            cursor = next;
+
+            // ZSCAN returns a flat [member, score, member, score, ...] list.
+            for id in flat.iter().step_by(2) {
+                let dlq_key = self.key(&["dlq", id]);
+                let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+                if let Some(d) = data {
+                    if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
+                        let expired = match entry.result_ttl_ms {
+                            Some(ttl) => entry
+                                .failed_at
+                                .checked_add(ttl)
+                                .is_some_and(|expiry| expiry <= now),
+                            None => global_cutoff_ms.is_some_and(|c| entry.failed_at < c),
+                        };
+                        if expired {
+                            total += 1;
+                        }
+                    }
+                }
+            }
+
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        Ok(total)
+    }
+
     /// Dead-letter entries eligible for automatic retry, bounded by `limit`.
     pub fn list_dead_for_retry(
         &self,

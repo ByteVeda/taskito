@@ -53,7 +53,7 @@ from taskito.predicates.outcomes import PredicateAction
 from taskito.proxies.built_in import BuiltInProxy
 from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
-from taskito.retention import EffectiveRetention, Retention
+from taskito.retention import EffectiveRetention, Retention, RetentionPreview
 from taskito.serializers import (
     CborSerializer,
     CloudpickleSerializer,
@@ -115,6 +115,7 @@ __all__ = [
     "ResourceNotFoundError",
     "ResourceUnavailableError",
     "Retention",
+    "RetentionPreview",
     "SerializationError",
     "Serializer",
     "Signature",

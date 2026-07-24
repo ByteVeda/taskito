@@ -19,8 +19,8 @@ import {
 } from "@/components/ui";
 import { formatRelative } from "@/lib/time";
 import { formatRetentionWindow, RETENTION_TABLES } from "../derived";
-import { useRetention } from "../hooks";
-import type { RetentionSnapshot } from "../types";
+import { useRetention, useRetentionDryRun } from "../hooks";
+import type { RetentionCounts, RetentionSnapshot } from "../types";
 
 /** On / off / unreported — the three states an operator has to tell apart. */
 function RetentionStatus({ snapshot }: { snapshot: RetentionSnapshot }) {
@@ -59,6 +59,62 @@ function WindowTable({ snapshot }: { snapshot: RetentionSnapshot }) {
         ))}
       </TableBody>
     </Table>
+  );
+}
+
+/**
+ * How many rows a purge would delete right now, without deleting. Computed
+ * in-process against the dashboard's default windows, so it always answers —
+ * a way to gauge the blast radius before an operator sizes a window. Degrades
+ * to nothing on its own error; the windows above carry the primary error state.
+ */
+function PurgePreview() {
+  const { data, isLoading, error } = useRetentionDryRun();
+
+  if (isLoading) return <Skeleton className="h-40 rounded-[var(--card-radius)]" />;
+  if (error || !data) return null;
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-[var(--border)] pt-[var(--gap)]">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-sm font-medium text-[var(--fg)]">Purge preview</div>
+        <div className="text-xs text-[var(--fg-muted)]">
+          {data.total === 0
+            ? "Nothing to delete right now"
+            : `${data.total.toLocaleString()} rows would be deleted now`}
+        </div>
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Table</TableHead>
+            <TableHead className="whitespace-nowrap">Window used</TableHead>
+            <TableHead className="text-right">Would delete now</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {RETENTION_TABLES.map(({ key, label }) => {
+            const countKey = key.slice(0, -"_ttl_ms".length) as keyof RetentionCounts;
+            return (
+              <TableRow key={key}>
+                <TableCell className="font-medium text-[var(--fg)]">{label}</TableCell>
+                <TableCell className="whitespace-nowrap tabular-nums">
+                  {formatRetentionWindow(data.windows[key])}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {data.counts[countKey].toLocaleString()}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+      <div className="text-xs text-[var(--fg-muted)]">
+        Previews {data.defaulted ? "the recommended default windows" : "the reported policy"} ·
+        namespace <span className="font-medium text-[var(--fg)]">{data.namespace}</span> · snapshot{" "}
+        {formatRelative(data.reference_time)}
+      </div>
+    </div>
   );
 }
 
@@ -124,6 +180,9 @@ export function RetentionSection() {
             </div>
           </>
         )}
+        {/* Independent of the echo above: computed in-process, so it renders
+            even before a worker has reported its windows. */}
+        {!isLoading && !error ? <PurgePreview /> : null}
       </CardContent>
     </Card>
   );

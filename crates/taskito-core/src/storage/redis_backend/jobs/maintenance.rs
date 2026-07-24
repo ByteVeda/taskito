@@ -1,11 +1,14 @@
 //! Periodic maintenance: purge completed jobs, reap stale running jobs,
 //! expire pending jobs, cancel by queue/task name.
 
+use std::collections::HashSet;
+
 use redis::Commands;
 
 use crate::error::Result;
 use crate::job::{now_millis, Job, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage, SCAN_BATCH};
+use crate::storage::{RetentionCounts, RetentionCutoffs};
 
 impl RedisStorage {
     /// Key of the completed-archive index SET (`archived:status:2`).
@@ -47,6 +50,119 @@ impl RedisStorage {
         if let Some(cutoff) = global_cutoff_ms {
             count += self.drain_archived_below(cutoff, now)?;
         }
+        Ok(count)
+    }
+
+    /// Read-only dry-run: count the rows each retention purge would delete under
+    /// `cutoffs`, without deleting or indexing anything. Delegates to the
+    /// per-table counters, each mirroring its purge's predicate.
+    pub fn count_expired_rows(
+        &self,
+        cutoffs: &RetentionCutoffs,
+        now: i64,
+    ) -> Result<RetentionCounts> {
+        Ok(RetentionCounts {
+            archived_jobs: self.count_expired_archived(cutoffs.archived_jobs, now)?,
+            dead_letter: self.count_expired_dead(cutoffs.dead_letter, now)?,
+            task_logs: match cutoffs.task_logs {
+                Some(cutoff) => self.count_expired_task_logs(cutoff)?,
+                None => 0,
+            },
+            task_metrics: match cutoffs.task_metrics {
+                Some(cutoff) => self.count_expired_metrics(cutoff)?,
+                None => 0,
+            },
+            job_errors: match cutoffs.job_errors {
+                Some(cutoff) => self.count_expired_job_errors(cutoff)?,
+                None => 0,
+            },
+        })
+    }
+
+    /// Count archived jobs a purge would remove under `global_cutoff_ms`,
+    /// mirroring [`Self::purge_completed_with_ttl`] without deleting.
+    ///
+    /// Read-only, so it does **not** backfill the expiry index: a pre-upgrade
+    /// per-entry row is counted only once it falls below the global window (the
+    /// same row the purge indexes lazily, one batch per tick). Post-upgrade
+    /// per-entry rows are collected from `archived:expiry` and excluded from the
+    /// global walk so the two drains are never double-counted.
+    pub fn count_expired_archived(&self, global_cutoff_ms: Option<i64>, now: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let expiry_key = self.key(&["archived", "expiry"]);
+        let all_key = self.key(&["archived", "all"]);
+
+        // Per-entry-expired rows (indexed): every id below `now` is deletable.
+        // Page the index so peak memory stays bounded; the set of per-entry
+        // archived rows is small in practice.
+        let mut indexed: HashSet<String> = HashSet::new();
+        let mut offset = 0i64;
+        loop {
+            let ids: Vec<String> = redis::cmd("ZRANGEBYSCORE")
+                .arg(&expiry_key)
+                .arg("-inf")
+                .arg(format!("({now}"))
+                .arg("LIMIT")
+                .arg(offset)
+                .arg(SCAN_BATCH)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            if ids.is_empty() {
+                break;
+            }
+            let drained = ids.len();
+            indexed.extend(ids);
+            offset += drained as i64;
+            if (drained as isize) < SCAN_BATCH {
+                break;
+            }
+        }
+        let mut count = indexed.len() as u64;
+
+        // Global window: rows below the cutoff the expiry index did not already
+        // account for — no per-entry TTL, or a per-entry TTL that has itself
+        // expired (a pre-upgrade row absent from the index).
+        if let Some(cutoff) = global_cutoff_ms {
+            let mut offset = 0i64;
+            loop {
+                let ids: Vec<String> = redis::cmd("ZRANGEBYSCORE")
+                    .arg(&all_key)
+                    .arg("-inf")
+                    .arg(format!("({cutoff}"))
+                    .arg("LIMIT")
+                    .arg(offset)
+                    .arg(SCAN_BATCH)
+                    .query(&mut conn)
+                    .map_err(map_err)?;
+                if ids.is_empty() {
+                    break;
+                }
+                let drained = ids.len();
+                for id in &ids {
+                    if indexed.contains(id) {
+                        continue;
+                    }
+                    let Some(job) = self.load_archived_job(&mut conn, id)? else {
+                        continue;
+                    };
+                    let deletable = match job.result_ttl_ms {
+                        None => true,
+                        Some(ttl) => job
+                            .completed_at
+                            .and_then(|c| c.checked_add(ttl))
+                            .is_some_and(|expiry| expiry < now),
+                    };
+                    if deletable {
+                        count += 1;
+                    }
+                }
+                offset += drained as i64;
+                if (drained as isize) < SCAN_BATCH {
+                    break;
+                }
+            }
+        }
+
         Ok(count)
     }
 

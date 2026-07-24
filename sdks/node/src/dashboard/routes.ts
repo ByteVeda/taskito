@@ -92,6 +92,11 @@ export const routes: Route[] = [
   { method: "GET", pattern: /^\/api\/retention$/, handle: (q) => h.retention(q) },
   {
     method: "GET",
+    pattern: /^\/api\/retention\/dry-run$/,
+    handle: (q) => h.retentionDryRun(q),
+  },
+  {
+    method: "GET",
     pattern: /^\/api\/settings\/(.+)$/,
     handle: (q, _url, p) => h.getSetting(q, id(p)),
   },

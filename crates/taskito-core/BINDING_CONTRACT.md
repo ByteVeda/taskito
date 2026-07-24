@@ -250,6 +250,36 @@ dashboard echoes that document instead of guessing at the defaults.
 - Shells read it through `scheduler::retention::read_effective_retention_json`
   rather than parsing the key themselves.
 
+## Retention dry-run (cross-SDK)
+A read-only preview of what a purge would delete *now*, so an operator can size a
+window without deleting anything. Computed in-process against live storage
+(unlike the echo above, which is published by a worker), so it always answers.
+
+- Shells call `scheduler::retention::dry_run_json(storage, retention, result_ttl_ms,
+  namespace, now)` for explicit windows, or `dry_run_reported_json(storage,
+  namespace, now)` to follow the policy the elected cleaner published (falling
+  back to the recommended defaults when unreported). The public surface is
+  `dry_run_retention()` (Python) / `dryRunRetention()` (Node/Java), each
+  accepting optional candidate windows (an empty config = a disabled policy).
+  **No-candidate semantics**: a shell whose queue handle carries retention
+  config previews that config; a shell where retention is a worker-only option
+  previews the *reported* policy — the one that actually governs the deletes.
+- **Document** (snake_case; windows in **milliseconds**, `null` = keep forever):
+  `enabled`, `defaulted`, `namespace`, `reference_time` (the Unix-ms `now` the
+  snapshot was taken at), `windows` (same fields as the echo), `counts` with
+  `archived_jobs`, `dead_letter`, `task_logs`, `task_metrics`, `job_errors`, and
+  `total`.
+- **Counts mirror the purge predicates exactly** (`Storage::count_expired_rows`):
+  `archived_jobs`/`dead_letter` always include per-entry-TTL-expired rows plus the
+  global window when set; the side tables count only when their window is set.
+- **Point-in-time snapshot**: nothing is deleted, and a later purge may differ as
+  rows age past their cutoffs. On a freshly-upgraded Redis archive, pre-existing
+  per-entry rows may be under-counted until backfill indexes them (the same rows
+  the purge indexes lazily).
+- **Dashboard** `GET /api/retention/dry-run` returns the same document. The
+  dashboard process previews its own (default) windows, which may differ from a
+  worker running configured windows elsewhere.
+
 ## Reserved settings prefixes (cross-SDK)
 The settings KV also backs auth state, webhook subscriptions, and the retention
 document above. None of it belongs on the dashboard's generic key/value surface:

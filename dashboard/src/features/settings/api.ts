@@ -1,5 +1,5 @@
 import { api } from "@/lib/api-client";
-import type { RetentionSnapshot, SettingsSnapshot } from "./types";
+import type { RetentionPreview, RetentionSnapshot, SettingsSnapshot } from "./types";
 
 export function fetchSettings(signal?: AbortSignal): Promise<SettingsSnapshot> {
   return api.get<SettingsSnapshot>("/api/settings", { signal });
@@ -7,6 +7,10 @@ export function fetchSettings(signal?: AbortSignal): Promise<SettingsSnapshot> {
 
 export function fetchRetention(signal?: AbortSignal): Promise<RetentionSnapshot> {
   return api.get<RetentionSnapshot>("/api/retention", { signal });
+}
+
+export function fetchRetentionDryRun(signal?: AbortSignal): Promise<RetentionPreview> {
+  return api.get<RetentionPreview>("/api/retention/dry-run", { signal });
 }
 
 export interface SettingResponse {

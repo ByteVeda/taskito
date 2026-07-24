@@ -55,7 +55,10 @@ from taskito.dashboard.handlers.overrides import (
     handle_put_task_override,
 )
 from taskito.dashboard.handlers.queues import _handle_stats_queues
-from taskito.dashboard.handlers.retention import _handle_retention
+from taskito.dashboard.handlers.retention import (
+    _handle_retention,
+    _handle_retention_dry_run,
+)
 from taskito.dashboard.handlers.scaler import build_scaler_response
 from taskito.dashboard.handlers.settings import (
     _handle_delete_setting,
@@ -147,6 +150,7 @@ GET_ROUTES: dict[str, Any] = {
     "/api/scaler": lambda q, qs: build_scaler_response(q, queue_name=qs.get("queue", [None])[0]),
     "/api/settings": _handle_list_settings,
     "/api/retention": _handle_retention,
+    "/api/retention/dry-run": _handle_retention_dry_run,
     "/api/webhooks": handle_list_webhooks,
     "/api/event-types": handle_list_event_types,
     "/api/tasks": handle_list_tasks,

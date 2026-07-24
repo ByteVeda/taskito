@@ -45,6 +45,7 @@ import org.byteveda.taskito.model.Page;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
+import org.byteveda.taskito.model.RetentionPreview;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskLogLevel;
@@ -77,6 +78,7 @@ import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.LogTopicReader;
+import org.byteveda.taskito.worker.Retention;
 import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.GateConfig;
 import org.byteveda.taskito.workflows.Step;
@@ -695,6 +697,17 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public Optional<EffectiveRetention> effectiveRetention() {
         return backend.effectiveRetentionJson().map(json -> decode(json, EffectiveRetention.class));
+    }
+
+    @Override
+    public RetentionPreview dryRunRetention() {
+        return decode(backend.dryRunRetentionJson(null), RetentionPreview.class);
+    }
+
+    @Override
+    public RetentionPreview dryRunRetention(Retention retention) {
+        String spec = retention == null ? null : encode(retention.toMap());
+        return decode(backend.dryRunRetentionJson(spec), RetentionPreview.class);
     }
 
     @Override

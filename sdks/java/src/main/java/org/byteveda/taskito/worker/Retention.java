@@ -28,8 +28,9 @@ public final class Retention {
         return new Builder();
     }
 
-    /** The set windows as a camelCase map for the native worker options. */
-    Map<String, Object> toMap() {
+    /** The set windows as a camelCase map for the native layer (worker options
+     *  and the retention dry-run). */
+    public Map<String, Object> toMap() {
         Map<String, Object> map = new LinkedHashMap<>();
         if (archivedJobs != null) {
             map.put("archivedJobs", archivedJobs);

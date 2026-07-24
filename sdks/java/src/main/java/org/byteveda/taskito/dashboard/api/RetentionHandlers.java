@@ -20,4 +20,10 @@ public final class RetentionHandlers {
     public Object retention() {
         return Contract.retention(queue.effectiveRetention().orElse(null));
     }
+
+    /** Preview what a purge would delete under the reported policy (recommended
+     *  defaults when unreported), computed in-process — so it always answers. */
+    public Object retentionDryRun() {
+        return Contract.retentionDryRun(queue.dryRunRetention());
+    }
 }

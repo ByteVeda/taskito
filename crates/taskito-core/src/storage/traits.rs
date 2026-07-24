@@ -5,7 +5,9 @@ use crate::storage::records::{
     RateLimitState, ReplayEntry, Subscription, SubscriptionMode, TaskLogEntry, TaskMetric, Topic,
     TopicLogStats, TopicMessage, WorkerInfo, WorkerStatus,
 };
-use crate::storage::{DeadJob, DispatchOrder, QueueStats, SubscriptionBacklogStats};
+use crate::storage::{
+    DeadJob, DispatchOrder, QueueStats, RetentionCounts, RetentionCutoffs, SubscriptionBacklogStats,
+};
 
 /// Trait abstracting the storage backend for the task queue.
 ///
@@ -146,6 +148,14 @@ pub trait Storage: Send + Sync + Clone {
     /// Global queue statistics: live counts from `jobs`, terminal counts from
     /// `archived_jobs`.
     fn stats(&self) -> Result<QueueStats>;
+    /// Read-only retention dry-run: count the rows each purge would delete under
+    /// `cutoffs`, without deleting anything. The per-table counts mirror the
+    /// purge predicates exactly — `archived_jobs`/`dead_letter` always include
+    /// per-entry-TTL-expired rows (compared to `now`) plus the global window
+    /// when its cutoff is set; the side tables count only when their cutoff is
+    /// set. Cheap and indexed on the Diesel backends; the Redis archived/dead
+    /// counts inspect their blobs like the purges they mirror.
+    fn count_expired_rows(&self, cutoffs: &RetentionCutoffs, now: i64) -> Result<RetentionCounts>;
     /// Purge archived completed jobs older than the cutoff. Returns the count
     /// removed.
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;

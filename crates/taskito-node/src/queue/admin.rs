@@ -10,6 +10,7 @@ use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::JsQueue;
+use crate::config::RetentionInput;
 use crate::convert::{dead_job_to_js, JsDeadJob, JsDeadJobPage};
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
@@ -238,5 +239,42 @@ impl JsQueue {
             self.namespace.as_deref(),
         )
         .map_err(to_napi_err)
+    }
+
+    /// Count what a retention purge would delete right now, without deleting
+    /// anything. Returns the preview as a JSON document. See
+    /// `BINDING_CONTRACT.md`.
+    ///
+    /// With no `retention` argument the preview follows the policy the elected
+    /// cleaner reported for this namespace (recommended defaults only when no
+    /// cleaner has swept yet) — retention config lives in the worker here, so
+    /// the report is the policy that actually governs the deletes. Pass
+    /// candidate windows to size a window before setting it — without
+    /// reconfiguring a worker. An all-unset input previews a disabled policy.
+    /// Async: the counts scan every history table.
+    #[napi]
+    pub async fn dry_run_retention(&self, retention: Option<RetentionInput>) -> Result<String> {
+        let config = retention.map(|r| r.to_config());
+        let storage = self.storage.clone();
+        let namespace = self.namespace.clone();
+        spawn_blocking(move || {
+            match config {
+                Some(config) => taskito_core::scheduler::retention::dry_run_json(
+                    &storage,
+                    Some(&config),
+                    None,
+                    namespace.as_deref(),
+                    now_millis(),
+                ),
+                None => taskito_core::scheduler::retention::dry_run_reported_json(
+                    &storage,
+                    namespace.as_deref(),
+                    now_millis(),
+                ),
+            }
+            .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 }

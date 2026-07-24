@@ -7,9 +7,9 @@ use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::borrow_queue;
-use crate::convert::{to_json, DeadJobView, ReplayEntryView};
+use crate::convert::{parse_json, to_json, DeadJobView, ReplayEntryView, RetentionSpec};
 use crate::error::BindingError;
-use crate::ffi::{guard, new_string, new_string_array, read_string};
+use crate::ffi::{guard, new_string, new_string_array, read_optional_string, read_string};
 
 /// `String listDead(long handle, long limit, long offset)` — dead-letter entries.
 #[no_mangle]
@@ -269,6 +269,46 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_effectiveR
             Some(json) => new_string(env, json),
             None => Ok(std::ptr::null_mut()),
         }
+    })
+}
+
+/// `String dryRunRetention(long handle, String retentionJson)` — count what a
+/// retention purge would delete right now, without deleting anything.
+/// `retentionJson` is a `RetentionSpec` (camelCase seconds) to preview those
+/// candidate windows; `null` previews the policy the elected cleaner reported
+/// for this namespace (recommended defaults only when unreported). Returns the
+/// preview as a JSON document. See `BINDING_CONTRACT.md`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_dryRunRetention<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    retention_json: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let preview = match read_optional_string(env, &retention_json)? {
+            // A present spec previews exactly those candidate windows (an
+            // all-unset spec = a disabled policy), overriding any live policy.
+            Some(json) => {
+                let config = parse_json::<RetentionSpec>(&json, "retention spec")?.to_config();
+                taskito_core::scheduler::retention::dry_run_json(
+                    &queue.storage,
+                    Some(&config),
+                    None,
+                    queue.namespace.as_deref(),
+                    now_millis(),
+                )?
+            }
+            // No candidate: retention config lives in the worker here, so the
+            // reported policy is the one that actually governs the deletes.
+            None => taskito_core::scheduler::retention::dry_run_reported_json(
+                &queue.storage,
+                queue.namespace.as_deref(),
+                now_millis(),
+            )?,
+        };
+        new_string(env, preview)
     })
 }
 

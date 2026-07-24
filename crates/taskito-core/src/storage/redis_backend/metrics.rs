@@ -129,6 +129,20 @@ impl RedisStorage {
 
     /// Purge metric records recorded at or before the cutoff (inclusive).
     /// Returns the count removed.
+    /// Count task-metric rows a purge would remove older than the cutoff,
+    /// mirroring [`Self::purge_metrics`] without deleting. `metrics:all` is
+    /// scored by `recorded_at`, so a `ZCOUNT` (inclusive of the cutoff, like the
+    /// purge's `ZRANGEBYSCORE`) is precise and O(log n).
+    pub fn count_expired_metrics(&self, older_than_ms: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let all_key = self.key(&["metrics", "all"]);
+        let n: i64 = conn
+            .zcount(&all_key, "-inf", older_than_ms as f64)
+            .map_err(map_err)?;
+        Ok(n as u64)
+    }
+
+    /// Purge task-metric rows older than the cutoff. Returns the count removed.
     pub fn purge_metrics(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["metrics", "all"]);

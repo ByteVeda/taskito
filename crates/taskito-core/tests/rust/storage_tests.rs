@@ -9,7 +9,7 @@
 
 use taskito_core::job::{now_millis, JobCompletion, JobStatus, NewJob};
 use taskito_core::storage::records::{SubscriptionMode, WorkerStatus};
-use taskito_core::storage::{DeadJob, Storage};
+use taskito_core::storage::{DeadJob, RetentionCutoffs, Storage};
 use taskito_core::SqliteStorage;
 
 fn make_job(queue: &str, task_name: &str) -> NewJob {
@@ -311,6 +311,119 @@ fn test_purge_retention_keeps_job_errors(s: &impl Storage) {
         1,
         "job_errors have no window here, so they must survive"
     );
+}
+
+/// Seed a known mix of purgeable rows and return the queue used. Callers diff
+/// `count_expired_rows` before and after to isolate the delta from whatever
+/// else the shared store already holds. Seeds: 2 no-TTL + 1 per-entry-expired
+/// archived jobs, 1 no-TTL + 1 per-entry-expired dead entries, 3 task logs,
+/// 2 metrics, 1 job error.
+fn seed_purgeable_rows(s: &impl Storage, q: &str, now: i64) -> String {
+    // archived_jobs: two with no per-entry TTL.
+    for i in 0..2u8 {
+        let job = s.enqueue(make_job(q, "dr_arch")).unwrap();
+        s.dequeue(q, now + 1000, None).unwrap();
+        s.complete(&job.id, Some(vec![i])).unwrap();
+    }
+    // archived_jobs: one with a 1ms per-entry TTL (expires almost immediately).
+    let mut nj = make_job(q, "dr_arch_ttl");
+    nj.result_ttl_ms = Some(1);
+    let ttl_job = s.enqueue(nj).unwrap();
+    s.dequeue(q, now + 1000, None).unwrap();
+    s.complete(&ttl_job.id, Some(vec![9])).unwrap();
+
+    // dead_letter: one no-TTL.
+    let d1 = s.enqueue(make_job(q, "dr_dead")).unwrap();
+    s.dequeue(q, now + 1000, None).unwrap();
+    let running = s.get_job(&d1.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "boom", None).unwrap();
+    // dead_letter: one per-entry TTL (carried from the job).
+    let mut ndj = make_job(q, "dr_dead_ttl");
+    ndj.result_ttl_ms = Some(1);
+    let d2 = s.enqueue(ndj).unwrap();
+    s.dequeue(q, now + 1000, None).unwrap();
+    let running2 = s.get_job(&d2.id).unwrap().unwrap();
+    s.move_to_dlq(&running2, "boom", None).unwrap();
+
+    // Side tables: logs, metrics, one error.
+    let side = s.enqueue(make_job(q, "dr_side")).unwrap();
+    for i in 0..3 {
+        s.write_task_log(&side.id, "dr_side", "info", &format!("l{i}"), None)
+            .unwrap();
+    }
+    s.record_metric("dr_metric", &side.id, 10, 20, true)
+        .unwrap();
+    s.record_metric("dr_metric", &side.id, 11, 21, true)
+        .unwrap();
+    s.record_error(&side.id, 0, "e0").unwrap();
+
+    // Let the 1ms per-entry TTLs lapse so `now` classifies them expired.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    side.id
+}
+
+fn test_count_expired_rows_matches_seeded_rows(s: &impl Storage) {
+    // Non-destructive: a far-future cutoff makes every seeded row eligible, and
+    // diffing the count before/after seeding isolates our rows from the shared
+    // store. A per-entry row counted twice (global + per-entry) would break the
+    // exact deltas, so this also guards the double-count boundary on every
+    // backend.
+    let now = now_millis();
+    let cutoffs = RetentionCutoffs {
+        archived_jobs: Some(now + 10_000),
+        dead_letter: Some(now + 10_000),
+        task_logs: Some(now + 10_000),
+        task_metrics: Some(now + 10_000),
+        job_errors: Some(now + 10_000),
+    };
+
+    let before = s.count_expired_rows(&cutoffs, now).unwrap();
+    seed_purgeable_rows(s, "q-dryrun-delta", now);
+    let after = s.count_expired_rows(&cutoffs, now_millis()).unwrap();
+
+    // archived = 2 no-TTL + 1 per-entry completed, plus the 2 Dead rows the DLQ
+    // moves also archive (one no-TTL, one per-entry) = 5.
+    assert_eq!(after.archived_jobs - before.archived_jobs, 5);
+    assert_eq!(
+        after.dead_letter - before.dead_letter,
+        2,
+        "1 no-TTL + 1 per-entry dead"
+    );
+    assert_eq!(after.task_logs - before.task_logs, 3);
+    assert_eq!(after.task_metrics - before.task_metrics, 2);
+    assert_eq!(after.job_errors - before.job_errors, 1);
+    assert_eq!(after.total() - before.total(), 13, "total sums every table");
+}
+
+fn test_count_expired_rows_none_cutoff_counts_per_entry_only(s: &impl Storage) {
+    // With no window on any table, only the per-entry-TTL rows of the two
+    // blob-carrying tables are counted; the side tables count nothing.
+    let now = now_millis();
+    let none = RetentionCutoffs::default();
+
+    let before = s.count_expired_rows(&none, now).unwrap();
+    seed_purgeable_rows(s, "q-dryrun-none", now);
+    let after = s.count_expired_rows(&none, now_millis()).unwrap();
+
+    // Per-entry archived rows: the completed per-entry job plus the per-entry
+    // Dead row its DLQ move archived = 2. The no-TTL archived rows need a global
+    // window, so they are not counted here.
+    assert_eq!(
+        after.archived_jobs - before.archived_jobs,
+        2,
+        "per-entry archived rows only"
+    );
+    assert_eq!(
+        after.dead_letter - before.dead_letter,
+        1,
+        "only the per-entry dead entry"
+    );
+    assert_eq!(
+        after.task_logs, before.task_logs,
+        "no window → no logs counted"
+    );
+    assert_eq!(after.task_metrics, before.task_metrics);
+    assert_eq!(after.job_errors, before.job_errors);
 }
 
 fn test_dead_letter_by_task(s: &impl Storage) {
@@ -1589,6 +1702,8 @@ fn run_storage_tests(s: &impl Storage) {
     test_purge_retention_covers_every_status(s);
     test_purge_retention_honors_per_entry_ttl(s);
     test_purge_retention_keeps_job_errors(s);
+    test_count_expired_rows_matches_seeded_rows(s);
+    test_count_expired_rows_none_cutoff_counts_per_entry_only(s);
     test_delete_dead(s);
     test_list_dead_for_retry(s);
     test_progress_tracking(s);

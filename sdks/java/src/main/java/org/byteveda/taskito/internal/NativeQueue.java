@@ -105,6 +105,14 @@ public final class NativeQueue {
     /** The published retention windows as JSON, or {@code null} if unreported. */
     public static native String effectiveRetention(long handle);
 
+    /**
+     * Preview counts as JSON. {@code retentionJson} is a candidate retention
+     * spec (camelCase seconds) to preview those windows; {@code null} previews
+     * the policy the elected cleaner reported for this namespace, falling back
+     * to the recommended defaults only when no cleaner has swept yet.
+     */
+    public static native String dryRunRetention(long handle, String retentionJson);
+
     // ── Logs ────────────────────────────────────────────────────────
     public static native void writeTaskLog(
             long handle, String jobId, String taskName, String level, String message, String extraOrNull);
