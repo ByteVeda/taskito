@@ -88,6 +88,7 @@ function PurgePreview() {
         <TableHeader>
           <TableRow>
             <TableHead>Table</TableHead>
+            <TableHead className="whitespace-nowrap">Window used</TableHead>
             <TableHead className="text-right">Would delete now</TableHead>
           </TableRow>
         </TableHeader>
@@ -97,6 +98,9 @@ function PurgePreview() {
             return (
               <TableRow key={key}>
                 <TableCell className="font-medium text-[var(--fg)]">{label}</TableCell>
+                <TableCell className="whitespace-nowrap tabular-nums">
+                  {formatRetentionWindow(data.windows[key])}
+                </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {data.counts[countKey].toLocaleString()}
                 </TableCell>
@@ -105,6 +109,11 @@ function PurgePreview() {
           })}
         </TableBody>
       </Table>
+      <div className="text-xs text-[var(--fg-muted)]">
+        Previews {data.defaulted ? "the recommended default windows" : "the reported policy"} ·
+        namespace <span className="font-medium text-[var(--fg)]">{data.namespace}</span> · snapshot{" "}
+        {formatRelative(data.reference_time)}
+      </div>
     </div>
   );
 }
