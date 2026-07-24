@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.GateEvent;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
@@ -114,6 +118,34 @@ class WorkflowGateTest {
                 assertEquals(WorkflowState.FAILED, status.state);
                 assertEquals(NodeStatus.SKIPPED, status.node("deploy").orElseThrow().status);
                 assertEquals(0, deployed.get());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void emitsGateReachedWhenTheGateParks(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("gev.db").toString()).open()) {
+            List<GateEvent> seen = new CopyOnWriteArrayList<>();
+            queue.onEvent(EventName.WORKFLOW_GATE_REACHED, event -> seen.add((GateEvent) event));
+
+            Workflow wf = gatedWorkflow(GateConfig.manual());
+            WorkflowRun run = queue.submitWorkflow(wf);
+            AtomicInteger deployed = new AtomicInteger();
+            try (Worker worker = queue.worker()
+                    .handle(PROCESS, p -> p)
+                    .handle(DEPLOY, p -> deployed.incrementAndGet())
+                    .trackWorkflows(wf)
+                    .start()) {
+                // The event is emitted just after the node is parked; poll for it.
+                long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+                while (seen.isEmpty() && System.nanoTime() < deadline) {
+                    Thread.sleep(50);
+                }
+                assertEquals(List.of(new GateEvent(run.runId(), "gate")), seen);
+                worker.approveGate(run.runId(), "gate");
+                assertEquals(WorkflowState.COMPLETED, run.await(Duration.ofSeconds(20)).state);
             }
         }
     }

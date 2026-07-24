@@ -17,6 +17,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.dashboard.DashboardServer;
 import org.byteveda.taskito.errors.ConfigurationException;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.TaskitoEvent;
 import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.locks.Lock;
@@ -88,6 +90,19 @@ public interface Taskito extends AutoCloseable {
 
     /** Register cross-cutting middleware (enqueue + worker hooks); returns {@code this}. */
     Taskito use(Middleware middleware);
+
+    /**
+     * Subscribe to queue-level events — enqueues, predicate rejections, queue
+     * pause/resume, workflow submission/cancellation — plus every event of
+     * workers built via {@link #worker()} (lifecycle, job outcomes, workflow
+     * progress). The listener narrows the {@link TaskitoEvent} to its concrete
+     * type; returns {@code this}.
+     *
+     * @throws UnsupportedOperationException when this implementation has no event hub
+     */
+    default Taskito onEvent(EventName name, Consumer<TaskitoEvent> listener) {
+        throw new UnsupportedOperationException("this Taskito implementation does not support event subscriptions");
+    }
 
     // ── Resources (worker-side dependency injection) ─────────────────
 

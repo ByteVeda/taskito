@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -41,7 +40,7 @@ public final class OpsHandlers {
     public Object eventTypes() {
         List<String> types = new ArrayList<>();
         for (EventName name : EventName.values()) {
-            types.add(name.name().toLowerCase(Locale.ROOT));
+            types.add(name.wireName());
         }
         return types;
     }

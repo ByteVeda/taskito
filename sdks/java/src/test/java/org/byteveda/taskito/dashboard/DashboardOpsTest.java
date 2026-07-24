@@ -91,7 +91,8 @@ class DashboardOpsTest {
             assertEquals("[]", client.get("/api/circuit-breakers").body());
 
             String eventTypes = client.get("/api/event-types").body();
-            assertTrue(eventTypes.contains("success") && eventTypes.contains("dead"));
+            assertTrue(eventTypes.contains("job.completed") && eventTypes.contains("job.dead"));
+            assertTrue(eventTypes.contains("workflow.submitted") && eventTypes.contains("predicate.rejected"));
 
             String scaler = client.get("/api/scaler").body();
             assertTrue(scaler.contains("\"metric_name\":\"taskito_queue_depth\""));

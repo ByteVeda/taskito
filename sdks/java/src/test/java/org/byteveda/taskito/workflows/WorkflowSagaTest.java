@@ -1,13 +1,17 @@
 package org.byteveda.taskito.workflows;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
@@ -58,6 +62,57 @@ class WorkflowSagaTest {
                 // Reverse-dependency order, each exactly once: b rolls back before a
                 // (undoB saw b's result 2 → 202; undoA saw a's result 1 → 101).
                 assertEquals(List.of(202, 101), List.copyOf(undone));
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void emitsCompensationLifecycleInOrder(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("sgev.db").toString()).open()) {
+            List<EventName> seen = new CopyOnWriteArrayList<>();
+            for (EventName name : List.of(
+                    EventName.WORKFLOW_COMPENSATING,
+                    EventName.WORKFLOW_NODE_COMPENSATING,
+                    EventName.WORKFLOW_NODE_COMPENSATED,
+                    EventName.WORKFLOW_COMPENSATED)) {
+                queue.onEvent(name, event -> seen.add(event.name()));
+            }
+            Workflow wf = Workflow.named("sagaev")
+                    .step(Step.of("a", A, 1).compensate(UNDO_A).build())
+                    .step(Step.of("c", C, 3).after("a").maxRetries(0).build());
+
+            WorkflowRun run = queue.submitWorkflow(wf);
+            try (Worker worker = queue.worker()
+                    .handle(A, p -> p)
+                    .handle(C, p -> {
+                        throw new IllegalStateException("boom");
+                    })
+                    .handle(UNDO_A, p -> p)
+                    .trackWorkflows()
+                    .start()) {
+                assertEquals(WorkflowState.COMPENSATED, run.await(Duration.ofSeconds(20)).state);
+                // The final event lands just after the run turns terminal; poll for it.
+                long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+                while (seen.size() < 4 && System.nanoTime() < deadline) {
+                    Thread.sleep(50);
+                }
+                if (seen.size() < 4) {
+                    fail("expected the full compensation lifecycle, saw " + seen);
+                }
+                assertTrue(
+                        seen.indexOf(EventName.WORKFLOW_COMPENSATING)
+                                < seen.indexOf(EventName.WORKFLOW_NODE_COMPENSATING),
+                        "run compensating must precede node compensating: " + seen);
+                assertTrue(
+                        seen.indexOf(EventName.WORKFLOW_NODE_COMPENSATING)
+                                < seen.indexOf(EventName.WORKFLOW_NODE_COMPENSATED),
+                        "node compensating must precede node compensated: " + seen);
+                assertTrue(
+                        seen.indexOf(EventName.WORKFLOW_NODE_COMPENSATED)
+                                < seen.indexOf(EventName.WORKFLOW_COMPENSATED),
+                        "node compensated must precede run compensated: " + seen);
             }
         }
     }

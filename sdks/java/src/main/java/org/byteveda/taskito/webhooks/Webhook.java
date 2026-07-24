@@ -15,7 +15,7 @@ import org.byteveda.taskito.events.EventName;
 public final class Webhook {
     public final String id;
     public final String url;
-    /** Outcome wire names this hook fires on: success/retry/dead/cancelled. */
+    /** Event wire names this hook fires on, e.g. {@code job.completed} (legacy outcome aliases still match). */
     public final List<String> events;
 
     public final String taskFilter;
@@ -78,7 +78,7 @@ public final class Webhook {
 
         public Builder on(EventName... names) {
             for (EventName name : names) {
-                events.add(name.name().toLowerCase(java.util.Locale.ROOT));
+                events.add(name.wireName());
             }
             return this;
         }

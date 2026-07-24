@@ -3,21 +3,28 @@ package org.byteveda.taskito.worker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.middleware.TaskContext;
+import org.byteveda.taskito.task.RetryPolicy;
 import org.byteveda.taskito.task.Task;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -126,5 +133,78 @@ class WorkerTest {
             assertTrue(duration >= 50, "outcome duration was " + duration + "ms");
             assertTrue(middlewareElapsed.get() >= 50, "middleware elapsed was " + middlewareElapsed.get() + "ms");
         }
+    }
+
+    @Test
+    @Timeout(30)
+    void emitsJobFailedBeforeTheRetryOutcome(@TempDir Path dir) throws Exception {
+        Task<String> flaky = Task.of("flaky", String.class)
+                .maxRetries(3)
+                .retryPolicy(RetryPolicy.delays(Duration.ofMillis(10), Duration.ofMillis(10)));
+        try (Taskito queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            queue.enqueue(flaky, "go");
+            List<EventName> order = new CopyOnWriteArrayList<>();
+            AtomicInteger attempts = new AtomicInteger();
+            try (Worker worker = queue.worker()
+                    .handle(flaky, (String payload) -> {
+                        if (attempts.incrementAndGet() == 1) {
+                            throw new IllegalStateException("first attempt fails");
+                        }
+                        return "ok";
+                    })
+                    .onEvent(EventName.JOB_FAILED, event -> order.add(event.name()))
+                    .on(EventName.RETRY, event -> order.add(event.name()))
+                    .start()) {
+                pollUntil(() -> order.contains(EventName.RETRY), "retry outcome never arrived");
+                int failedAt = order.indexOf(EventName.JOB_FAILED);
+                assertTrue(failedAt >= 0, "job.failed must fire for the failing attempt");
+                assertTrue(failedAt < order.indexOf(EventName.RETRY), "job.failed must precede the retry outcome");
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void emitsWorkerLifecycleInOrder(@TempDir Path dir) {
+        Task<Map<String, Object>> noop = Task.of("noop", mapType());
+        try (Taskito queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            List<EventName> lifecycle = new CopyOnWriteArrayList<>();
+            // Subscribed at the queue: worker events must reach queue-level listeners.
+            for (EventName name : List.of(
+                    EventName.WORKER_STARTED,
+                    EventName.WORKER_ONLINE,
+                    EventName.WORKER_STOPPED,
+                    EventName.WORKER_OFFLINE)) {
+                queue.onEvent(name, event -> lifecycle.add(event.name()));
+            }
+            Worker worker = queue.worker().handle(noop, p -> "ok").start();
+            worker.stop(); // stopped fires here...
+            worker.close(); // ...and close() must not repeat it before going offline
+            assertEquals(
+                    List.of(
+                            EventName.WORKER_STARTED,
+                            EventName.WORKER_ONLINE,
+                            EventName.WORKER_STOPPED,
+                            EventName.WORKER_OFFLINE),
+                    lifecycle);
+        }
+    }
+
+    /** Poll {@code condition} until it holds, or fail after 20s. */
+    private static void pollUntil(BooleanSupplier condition, String message) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        fail(message);
     }
 }
