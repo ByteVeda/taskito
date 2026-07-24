@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from taskito.events import EventType
@@ -12,6 +13,9 @@ from taskito.workflows.tracker.dag import build_dag_maps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+logger = logging.getLogger("taskito.workflows")
 
 
 class QueueWorkflowMixin:
@@ -91,11 +95,16 @@ class QueueWorkflowMixin:
             cache_hit_nodes,
         )
 
-        if hasattr(self, "_emit_event"):
-            self._emit_event(
-                EventType.WORKFLOW_SUBMITTED,
-                {"run_id": handle.run_id, "workflow_name": handle.name},
-            )
+        # The run is already persisted — a listener failure must not abort
+        # tracker registration or swallow the returned handle.
+        try:
+            if hasattr(self, "_emit_event"):
+                self._emit_event(
+                    EventType.WORKFLOW_SUBMITTED,
+                    {"run_id": handle.run_id, "workflow_name": handle.name},
+                )
+        except Exception:
+            logger.exception("failed to emit WORKFLOW_SUBMITTED")
 
         # Register with the tracker when the workflow needs Python-side
         # orchestration (deferred nodes, conditions, gates, or continue mode).
