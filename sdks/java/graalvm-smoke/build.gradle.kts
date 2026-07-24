@@ -1,6 +1,8 @@
 // A throwaway consumer that drives the SDK's JNI + Jackson paths end to end.
-// CI builds it into a GraalVM native image to verify the reachability metadata
-// the runtime ships. Not published; not part of the SDK artifact.
+// CI builds it into a GraalVM native image (no tracing agent) to verify the
+// reachability metadata the runtime jar ships under
+// META-INF/native-image/org.byteveda/taskito/. Not published; not part of the
+// SDK artifact.
 plugins {
     application
     checkstyle
@@ -28,13 +30,16 @@ graalvmNative {
         // Fail the build on missing metadata rather than emitting a fallback image.
         buildArgs.add("--no-fallback")
     }
-    // CI runs the smoke under the tracing agent (`-Pagent :graalvm-smoke:run`)
-    // then `metadataCopy` to populate this module's resources, so `nativeCompile`
-    // sees the JNI/reflection metadata the SDK's JNI + Jackson paths require.
+    // Regeneration helper, not part of CI: `-Pagent :graalvm-smoke:run` then
+    // `:graalvm-smoke:metadataCopy` rewrites the SDK's shipped metadata from a
+    // fresh trace. Review the diff before committing — the agent records only
+    // what the smoke exercised, and the resource-includes pattern for the
+    // native library must stay platform-generic (see the shipped
+    // resource-config.json).
     agent {
         metadataCopy {
             inputTaskNames.add("run")
-            outputDirectories.add("src/main/resources/META-INF/native-image")
+            outputDirectories.add("../src/main/resources/META-INF/native-image/org.byteveda/taskito")
             mergeWithExisting.set(true)
         }
     }

@@ -1,6 +1,3 @@
 .gradle/
 build/
 bin/
-
-# Agent-generated GraalVM metadata for the smoke (regenerated in CI).
-graalvm-smoke/src/main/resources/META-INF/native-image/
