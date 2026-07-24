@@ -2,7 +2,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { allOf, anyOf, not, PredicateRejectedError, Queue } from "../../src/index";
+import {
+  allOf,
+  anyOf,
+  not,
+  type PredicateEvent,
+  PredicateRejectedError,
+  Queue,
+} from "../../src/index";
 
 function newQueue(): Queue {
   return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-pred-")), "q.db") });
@@ -52,6 +59,19 @@ it("composes predicates with allOf / anyOf / not", () => {
   const q2 = newQueue().task("t", (n: number) => n);
   q2.gate("t", anyOf(positive, even));
   expect(typeof q2.enqueue("t", [-2])).toBe("string"); // negative but even
+});
+
+it("emits predicate.rejected alongside the throw", () => {
+  const queue = newQueue().task("charge", (n: number) => n);
+  queue.gate("charge", ({ args }) => args[0] > 0);
+  const rejected: PredicateEvent[] = [];
+  queue.on("predicate.rejected", (event) => rejected.push(event));
+
+  expect(() => queue.enqueue("charge", [-1])).toThrow(PredicateRejectedError);
+  expect(rejected).toEqual([{ taskName: "charge" }]);
+
+  queue.enqueue("charge", [5]); // a passing gate emits nothing
+  expect(rejected).toHaveLength(1);
 });
 
 it("gates each job in a batch", () => {

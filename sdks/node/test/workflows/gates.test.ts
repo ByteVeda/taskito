@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Queue, type Worker } from "../../src/index";
+import { type GateEvent, Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 
@@ -153,6 +153,29 @@ it("resolves the parent node when a gate inside a sub-workflow is approved", asy
   expect(run.state).toBe("completed");
   expect(nodesByName(handle).sub?.status).toBe("completed");
   expect(ran).toEqual(["prep", "childTask", "finish"]);
+});
+
+it("emits workflow.gate_reached with the gate message", async () => {
+  const queue = freshQueue();
+  const reached: GateEvent[] = [];
+  queue.on("workflow.gate_reached", (event) => reached.push(event));
+  queue.task("prepare", () => 1);
+
+  const handle = queue.workflows
+    .define("gate-event")
+    .step("prepare", "prepare")
+    .gate("review", { after: "prepare", message: "please review" })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+
+  expect(await waitFor(() => reached.length > 0)).toBe(true);
+  expect(reached).toEqual([{ runId: handle.runId, node: "review", message: "please review" }]);
+
+  queue.workflows.approveGate(handle.runId, "review");
+  const run = await handle.wait({ timeoutMs: 8000 });
+  expect(run.state).toBe("completed");
+  expect(reached).toHaveLength(1); // approval does not re-enter the gate
 });
 
 it("auto-resolves a gate on timeout per onTimeout", async () => {
