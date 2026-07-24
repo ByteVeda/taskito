@@ -42,11 +42,25 @@ import type { EventMap, EventPayload, WorkerEvent } from "@byteveda/taskito";
 | `job.dead` | A job exhausted its retries and dead-lettered. | `OutcomeEvent` |
 | `job.cancelled` | A job was cancelled. | `OutcomeEvent` |
 
-Every outcome event shares the same shape, `OutcomeEvent`: `jobId`,
-`taskName`, `queue`, and outcome details (`error`, `retryCount`, `timedOut`).
+Every outcome event shares the same shape, `OutcomeEvent`. Only `jobId` and
+`taskName` are always present — the rest is optional and filled in as it
+becomes known:
+
+```ts
+interface OutcomeEvent {
+  jobId: string;
+  taskName: string;
+  queue?: string; // absent on job.failed (fires before it's decided)
+  error?: string;
+  retryCount?: number; // absent on job.failed
+  timedOut?: boolean;
+  durationMs?: number; // absent when nothing measured the run
+}
+```
+
 `durationMs` reports how long the job ran, as the runtime measured it —
-absent when nothing measured the run, e.g. a job that failed before it ever
-executed, or `job.failed` firing before `queue`/`retryCount` are decided.
+absent when nothing measured the run, e.g. a job the runtime recovered
+rather than a worker finishing it.
 
 ```ts
 queue.on("job.completed", (e) => metrics.timing(e.taskName, e.durationMs));
