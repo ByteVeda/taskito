@@ -652,9 +652,10 @@ against live storage, so it always answers.
 ```
 
 `counts` mirror each table's purge exactly; `reference_time` is the Unix-ms
-instant the snapshot was taken. Read-only — nothing is deleted. The dashboard
-process previews its own windows, which may differ from a worker running
-configured windows elsewhere.
+instant the snapshot was taken. Read-only — nothing is deleted. The preview
+uses this queue's configured windows (falling back to the recommended
+defaults), which may differ from a worker configured differently elsewhere —
+compare against `/api/retention` to see what a worker reported.
 
 ## Using the API programmatically
 
