@@ -40,6 +40,17 @@ underlying Rust crates are released together, in lock-step.
 - Job outcome events report how long the task ran: `durationMs()` on Java's `OutcomeEvent`,
   `durationMs` on Node's, and `duration_ms` on Python's job event payloads. Java also gains
   `NodeSnapshot.durationMs()` / `compensationDurationMs()` and `TaskContext.elapsedMs()`.
+- **Full lifecycle event taxonomy in the Node and Java SDKs.** Both grow from the 4 job-outcome
+  events to the 26-event cross-SDK taxonomy: enqueue, per-attempt failure (`job.failed`), worker
+  lifecycle, queue pause/resume, workflow submit/terminal/gate, saga compensation, and predicate
+  rejection. Node types `queue.on()` per event name (`EventMap`); Java adds queue-level
+  `taskito.onEvent(EventName, Consumer<TaskitoEvent>)` with typed event records alongside the
+  unchanged worker-scoped `Worker.Builder.on(...)`. Webhooks can subscribe to every event name.
+  `predicate.deferred` / `predicate.cancelled` stay Python-only (no defer verdict elsewhere), and
+  Python now emits the previously dormant `workflow.submitted`.
+- **Java webhook deliveries use the dotted wire names.** Bodies that previously said
+  `"event": "success"` now say `"event": "job.completed"`; stored subscriptions with the legacy
+  four names keep matching, and job-outcome bodies gain `duration_ms`.
 
 ### Fixed
 
