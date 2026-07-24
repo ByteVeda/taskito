@@ -527,7 +527,6 @@ public final class WorkflowTracker {
     /** Park a gate node for approval, scheduling its timeout auto-resolution if any. */
     private void enterGate(String runId, PlanNode node) {
         backend.setWorkflowNodeWaitingApproval(runId, node.name);
-        emit(new GateEvent(runId, node.name));
         GateMeta meta = node.gate == null ? null : decode(node.gate, GateMeta.class);
         if (meta != null && meta.timeoutMs != null) {
             GateKey key = new GateKey(runId, node.name);
@@ -538,6 +537,9 @@ public final class WorkflowTracker {
                             meta.timeoutMs,
                             TimeUnit.MILLISECONDS));
         }
+        // Emit after the timer is registered: a synchronous listener may resolve
+        // the gate immediately, and resolution must find (and cancel) the timer.
+        emit(new GateEvent(runId, node.name));
     }
 
     private void onGateTimeout(String runId, String nodeName, String onTimeout) {
