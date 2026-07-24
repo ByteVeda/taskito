@@ -3,14 +3,22 @@ title: Webhooks
 description: "Deliver job events to HTTP endpoints — signed, retried, persisted."
 ---
 
-Deliver job outcomes to HTTP endpoints. Deliveries are HMAC-SHA256 signed,
-retried with exponential backoff, and subscriptions are persisted in storage —
-they survive restarts.
+Deliver job, worker, queue, workflow, and predicate events to HTTP endpoints.
+Deliveries are HMAC-SHA256 signed, retried with exponential backoff, and
+subscriptions are persisted in storage — they survive restarts.
+
+<Callout type="warning" title="Wire names replace legacy event strings">
+  Deliveries and the dashboard now use the dotted wire names everywhere — a
+  delivery that used to say `"event": "success"` now says `"event":
+  "job.completed"`. Stored subscriptions created against the old four names
+  (`success` / `retry` / `dead` / `cancelled`) keep matching; nothing to
+  migrate.
+</Callout>
 
 <Seq
   heads={["Worker", "Endpoint"]}
   rows={[
-    { self: "job outcome fires (e.g. DEAD)" },
+    { self: "an event fires (e.g. job.dead)" },
     { left: "POST + X-Taskito-Signature: sha256=…" },
     { right: "2xx / 4xx → done", rev: true },
     { self: "5xx or network error → retry with backoff" },
@@ -24,7 +32,7 @@ client; create subscriptions with the `Webhook` builder:
 WebhookManager webhooks = WebhookManager.attach(taskito);
 
 Webhook hook = webhooks.create(Webhook.builder("https://hooks.example.com/jobs")
-        .on(EventName.DEAD, EventName.SUCCESS) // required — no events, no deliveries
+        .on(EventName.DEAD, EventName.SUCCESS, EventName.WORKER_OFFLINE) // any of the 26 events — required, or no deliveries
         .secret(System.getenv("WEBHOOK_SECRET"))
         .taskFilter("send_email"));            // optional, exact task name
 
@@ -35,28 +43,49 @@ webhooks.delete(hook.id);
 
 | Builder method | Default | Description |
 |---|---|---|
-| `on(EventName...)` | — | Outcomes to deliver. |
+| `on(EventName...)` | — | Events to deliver — any of the 26 dotted wire names (job/worker/queue/workflow/predicate); see [Events](/java/guides/extensibility/events). |
 | `secret(String)` | none | Signs each delivery as `X-Taskito-Signature: sha256=<hex>`. |
-| `taskFilter(String)` | all tasks | Only deliver for this exact task name. |
+| `taskFilter(String)` | all tasks | Only deliver for this exact task name — screens task-bearing events only (see below). |
 | `header(String, String)` | — | Extra headers added to every delivery. |
 | `maxRetries(int)` | `3` | Retry budget per delivery. |
 | `timeoutMs(long)` | `10000` | Per-request HTTP timeout. |
 | `enabled(boolean)` | `true` | Disable without deleting. |
 | `description(String)` | — | Free-form note. |
 
-Deliveries fire from the **worker process** (where outcomes originate), as an
-async `POST` with a JSON body in snake_case:
+Deliveries fire from the process that attached the `WebhookManager` — usually
+the worker process for job outcomes, though queue-, workflow-, and
+predicate-level events fire from wherever that action happened (`pause()`,
+`submitWorkflow()`, …) on the same `Taskito` client. Every delivery is an
+async `POST` with a JSON body in snake_case; job outcomes look like this:
 
 ```json
 {
-  "event": "dead",
+  "event": "job.dead",
   "job_id": "…",
   "task_name": "send_email",
   "error": "…",
   "retry_count": 3,
-  "timed_out": false
+  "timed_out": false,
+  "duration_ms": null
 }
 ```
+
+Non-outcome events deliver a per-type body instead:
+
+| Event | Body fields |
+|---|---|
+| `JOB_ENQUEUED` | `job_id`, `task_name`, `queue` |
+| `QUEUE_PAUSED` / `QUEUE_RESUMED` | `queue` |
+| `WORKER_*` | `queues` |
+| Workflow terminal + saga events | `run_id`, `workflow`, `error` |
+| `WORKFLOW_GATE_REACHED` | `run_id`, `node` |
+| `WORKFLOW_NODE_*` | `run_id`, `node`, `error` |
+| `PREDICATE_REJECTED` | `task_name`, `reason` |
+
+A subscription's `taskFilter` only screens events that carry a task name —
+job outcomes, `JOB_ENQUEUED`, and `PREDICATE_REJECTED`. Worker, queue, and
+workflow events have no task identity, so they always deliver regardless of
+`taskFilter`.
 
 A send error or a `5xx` response is retried with exponential backoff (500 ms
 base, doubling, capped at 30 s) up to `maxRetries`; `4xx` responses are not
