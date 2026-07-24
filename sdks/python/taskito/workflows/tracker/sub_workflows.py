@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from taskito.events import EventType
+
 if TYPE_CHECKING:
     from taskito.workflows.tracker.tracker import WorkflowTracker
     from taskito.workflows.tracker.types import _RunConfig
@@ -69,6 +71,17 @@ def submit_sub_workflow(
 
     # Child compiled and submitted successfully — now promote the parent.
     child_run_id = handle.run_id
+    try:
+        tracker._queue._emit_event(
+            EventType.WORKFLOW_SUBMITTED,
+            {
+                "run_id": child_run_id,
+                "workflow_name": handle.name,
+                "parent_run_id": run_id,
+            },
+        )
+    except Exception:
+        logger.exception("failed to emit WORKFLOW_SUBMITTED")
     with tracker._state_lock:
         tracker._child_to_parent[child_run_id] = (run_id, node_name)
     try:
