@@ -26,4 +26,19 @@ class OutcomeEventTest {
         assertNull(event.durationMs());
         assertNull(new OutcomeEvent(EventName.DEAD, "j", "t", "boom", -1, false).durationMs());
     }
+
+    @Test
+    void nameAccessorMirrorsTheField() {
+        OutcomeEvent event = new OutcomeEvent(EventName.RETRY, "j", "t", "boom", 1, false);
+        assertEquals(EventName.RETRY, event.name());
+        assertEquals(event.name, event.name());
+    }
+
+    @Test
+    void jobFailedShapedEventCarriesTheAttemptError() {
+        OutcomeEvent event = new OutcomeEvent(EventName.JOB_FAILED, "j", "t", "boom", -1, false, 0L);
+        assertEquals(EventName.JOB_FAILED, event.name());
+        assertEquals("boom", event.error);
+        assertNull(event.durationMs());
+    }
 }
