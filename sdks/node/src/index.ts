@@ -38,7 +38,22 @@ export {
   TaskNotRegisteredError,
   WorkflowError,
 } from "./errors";
-export type { EventHandler, EventName, OutcomeEvent } from "./events";
+export {
+  type EnqueuedEvent,
+  EVENT_NAMES,
+  type EventHandler,
+  type EventMap,
+  type EventName,
+  type EventPayload,
+  type GateEvent,
+  type NodeCompensationEvent,
+  type OutcomeEvent,
+  type PredicateEvent,
+  type QueueEvent,
+  type WorkerEvent,
+  type WorkerUnhealthyEvent,
+  type WorkflowEvent,
+} from "./events";
 export { Interception, type Interceptor } from "./interception";
 export { Lock, type LockInfo, type LockOptions } from "./locks";
 export type { EnqueueContext, Middleware, TaskContext } from "./middleware";

@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { LookupFunction } from "node:net";
-import type { EventName, OutcomeEvent } from "../events";
+import type { EventName, EventPayload } from "../events";
 import { createLogger } from "../utils";
 import { UnsafeWebhookUrlError } from "./errors";
 import type { Delivery, Webhook } from "./types";
@@ -22,7 +22,11 @@ export class Deliverer {
     return this.recent.filter((delivery) => delivery.webhookId === webhookId);
   }
 
-  async deliver(webhook: Webhook, event: EventName, payload: OutcomeEvent): Promise<Delivery> {
+  async deliver(
+    webhook: Webhook,
+    event: EventName,
+    payload: EventPayload | Record<string, unknown>,
+  ): Promise<Delivery> {
     const payloadRecord: Record<string, unknown> = { event, ...payload };
     const body = JSON.stringify(payloadRecord);
     const headers: Record<string, string> = {
@@ -108,8 +112,9 @@ export class Deliverer {
       ok,
       attempts,
       payload: payloadRecord,
-      taskName: payload.taskName ?? null,
-      jobId: payload.jobId ?? null,
+      // Not every event concerns a job — record identities only when present.
+      taskName: typeof payloadRecord.taskName === "string" ? payloadRecord.taskName : null,
+      jobId: typeof payloadRecord.jobId === "string" ? payloadRecord.jobId : null,
       responseCode,
       responseBody,
       latencyMs: completedAt - createdAt,

@@ -331,6 +331,13 @@ export interface WorkerRunOptions {
    * ignored (polling is kept).
    */
   pushDispatch?: boolean;
+  /**
+   * Heartbeat cadence override, in ms (default 5000). Exists so tests can
+   * exercise heartbeat-driven behavior quickly.
+   *
+   * @internal
+   */
+  heartbeatIntervalMs?: number;
 }
 
 /**

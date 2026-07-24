@@ -1,4 +1,5 @@
 import { WorkflowError } from "../errors";
+import type { Emitter } from "../events";
 import type { NativeQueue } from "../native";
 import { type Serializer, serializeCall } from "../serializers";
 import { WorkflowAnalysis, type WorkflowGraph } from "./analysis";
@@ -48,6 +49,8 @@ export class WorkflowManager {
       _taskName,
       value,
     ) => serializeCall(this.serializer, value as unknown[]),
+    /** Emits workflow lifecycle events; absent when constructed standalone. */
+    private readonly emitter?: Emitter,
   ) {
     if (typeof this.native.submitWorkflow !== "function") {
       throw new WorkflowError("the native addon was built without the 'workflows' feature");
@@ -166,6 +169,7 @@ export class WorkflowManager {
       null,
       null,
     );
+    this.emitter?.emit("workflow.submitted", { runId, name: transport.name });
     return this.makeHandle(runId);
   }
 
