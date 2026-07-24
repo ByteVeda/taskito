@@ -490,10 +490,13 @@ public final class Worker implements AutoCloseable {
             WorkerDispatchBridge bridge = new WorkerDispatchBridge(
                     backend, handlers, serializer, executor, emitter, middleware, resources, codecs);
             List<String> servedQueues = queues == null ? List.of() : List.copyOf(queues);
-            emitter.emit(new WorkerEvent(EventName.WORKER_STARTED, servedQueues));
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
-            emitter.emit(new WorkerEvent(EventName.WORKER_ONLINE, servedQueues));
             bridge.bind(control);
+            // Emit only after the bridge is bound: a synchronous listener may
+            // enqueue and join a job, which needs a live control. STARTED never
+            // fires for a worker whose native start threw.
+            emitter.emit(new WorkerEvent(EventName.WORKER_STARTED, servedQueues));
+            emitter.emit(new WorkerEvent(EventName.WORKER_ONLINE, servedQueues));
             // Lease worker resources only after the native worker started cleanly.
             resources.acquireWorker();
             if (scaler != null) {
