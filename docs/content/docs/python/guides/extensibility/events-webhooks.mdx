@@ -42,13 +42,28 @@ payloads, delivery logs, and the REST API — e.g.
 | `JOB_RETRYING` | A failed job will be retried | `job_id`, `task_name`, `error`, `retry_count`, `duration_ms` |
 | `JOB_DEAD` | A job exhausts all retries and enters the DLQ | `job_id`, `task_name`, `error`, `duration_ms` |
 | `JOB_CANCELLED` | A job is cancelled | `job_id`, `task_name`, `duration_ms` |
-| `WORKER_STARTED` | A worker process/thread comes online | `worker_id`, `hostname` |
-| `WORKER_STOPPED` | A worker process/thread shuts down | `worker_id`, `hostname` |
+| `WORKER_STARTED` | A worker process/thread comes online | `worker_id`, `queues` |
+| `WORKER_STOPPED` | A worker process/thread shuts down | `worker_id` |
 | `WORKER_ONLINE` | Worker registered in storage (visible to fleet) | `worker_id`, `queues`, `pool` |
 | `WORKER_OFFLINE` | Dead worker reaped (no heartbeat for 30s) | `worker_id` |
 | `WORKER_UNHEALTHY` | Resource health transitions to unhealthy | `worker_id`, `resources` |
 | `QUEUE_PAUSED` | A named queue is paused | `queue` |
 | `QUEUE_RESUMED` | A paused queue is resumed | `queue` |
+| `WORKFLOW_SUBMITTED` | A workflow run is submitted | `run_id`, `workflow_name` (+ `parent_run_id` for sub-workflows) |
+| `WORKFLOW_COMPLETED` | A run reaches the completed terminal state | `run_id`, `state`, `error` |
+| `WORKFLOW_COMPLETED_WITH_FAILURES` | A `continue`-mode run finishes with mixed outcomes | `run_id`, `state`, `error` |
+| `WORKFLOW_FAILED` | A run reaches the failed terminal state | `run_id`, `state`, `error` |
+| `WORKFLOW_CANCELLED` | A run is cancelled | `run_id`, `state`, `error` |
+| `WORKFLOW_GATE_REACHED` | A node parks at an approval gate | `run_id`, `node_name`, `message` |
+| `WORKFLOW_COMPENSATING` | Saga rollback starts for a run | `workflow_run_id` |
+| `WORKFLOW_COMPENSATED` | All compensation waves finished cleanly | `workflow_run_id`, `any_failed` |
+| `WORKFLOW_COMPENSATION_FAILED` | A compensation wave failed | `workflow_run_id`, `any_failed` |
+| `NODE_COMPENSATING` | A compensator job is enqueued for a node | `workflow_run_id`, `workflow_node_name`, `compensation_job_id`, `compensation_task` |
+| `NODE_COMPENSATED` | A node's compensator completed | `workflow_run_id`, `workflow_node_name`, `error` |
+| `NODE_COMPENSATION_FAILED` | A node's compensator failed | `workflow_run_id`, `workflow_node_name`, `error` |
+| `PREDICATE_DEFERRED` | A predicate defers a task (enqueue- or dispatch-time) | `task_name`, `queue`, `defer_seconds`, `phase` (+ `job_id` at dispatch) |
+| `PREDICATE_CANCELLED` | A dispatch-time predicate cancels a job | `task_name`, `job_id`, `queue`, `phase` (+ `reason`) |
+| `PREDICATE_REJECTED` | An enqueue-time predicate rejects a task | `task_name`, `queue`, `phase` (+ `reason`) |
 
 `duration_ms` is how long the job ran, so a listener needn't time it. On the
 outcome events (`JOB_RETRYING`, `JOB_DEAD`, `JOB_CANCELLED`) it is `None` when
