@@ -1,5 +1,7 @@
 package org.byteveda.taskito.events;
 
+import java.util.Objects;
+
 /** A finished job's outcome. {@code error} is null on success/cancel; {@code retryCount} is -1 when N/A. */
 public final class OutcomeEvent implements TaskitoEvent {
     public final EventName name;
@@ -24,7 +26,9 @@ public final class OutcomeEvent implements TaskitoEvent {
             int retryCount,
             boolean timedOut,
             long wallTimeNs) {
-        this.name = name;
+        // Emitter keys its listener map on name() — a null here would NPE at
+        // emit time, after the event escaped; fail at construction instead.
+        this.name = Objects.requireNonNull(name, "name");
         this.jobId = jobId;
         this.taskName = taskName;
         this.error = error;
