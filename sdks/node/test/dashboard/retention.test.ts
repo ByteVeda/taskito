@@ -138,10 +138,10 @@ describe("retention api", () => {
 });
 
 describe("dryRunRetention", () => {
-  it("previews the default windows on an empty queue", () => {
-    // Computed in-process, so it answers without a worker sweep. Empty queue →
-    // every count is zero, but the defaults are still reported as on.
-    const preview = queue.dryRunRetention();
+  it("previews the default windows on an unreported queue", async () => {
+    // Computed in-process, so it answers without a worker sweep. No cleaner
+    // has reported → the recommended defaults; empty queue → every count zero.
+    const preview = await queue.dryRunRetention();
 
     expect(preview.enabled).toBe(true);
     expect(preview.defaulted).toBe(true);
@@ -157,8 +157,31 @@ describe("dryRunRetention", () => {
     });
   });
 
-  it("previews candidate windows without configuring a worker", () => {
-    const preview = queue.dryRunRetention({ archivedJobs: 0 });
+  it("follows the reported policy when a cleaner has published one", async () => {
+    // Retention config lives in the worker here, so the no-candidate preview
+    // must follow the policy that actually governs the deletes — the reported
+    // document — not assume the recommended defaults.
+    queue.setSetting(
+      PUBLISHED_KEY,
+      JSON.stringify({
+        enabled: true,
+        defaulted: false,
+        namespace: "default",
+        reported_at: 1_753_200_000_000,
+        windows: { task_logs_ttl_ms: 3_600_000 },
+      }),
+    );
+
+    const preview = await queue.dryRunRetention();
+
+    expect(preview.defaulted).toBe(false);
+    expect(preview.windows.taskLogs).toBe(3_600_000);
+    // Tables the report leaves out keep forever.
+    expect(preview.windows.archivedJobs).toBeNull();
+  });
+
+  it("previews candidate windows without configuring a worker", async () => {
+    const preview = await queue.dryRunRetention({ archivedJobs: 0 });
 
     expect(preview.enabled).toBe(true);
     expect(preview.defaulted).toBe(false);
@@ -188,6 +211,22 @@ describe("retention dry-run api", () => {
       task_logs_ttl_ms: 3 * DAY_MS,
       archived_jobs_ttl_ms: 7 * DAY_MS,
       job_errors_ttl_ms: 7 * DAY_MS,
+      task_metrics_ttl_ms: 7 * DAY_MS,
+      dead_letter_ttl_ms: 30 * DAY_MS,
+    });
+  });
+
+  it("echoes the reported policy's windows once published", async () => {
+    queue.setSetting(PUBLISHED_KEY, published);
+
+    const body = await get("/api/retention/dry-run");
+
+    expect(body.defaulted).toBe(true);
+    expect(body.windows).toEqual({
+      task_logs_ttl_ms: 3 * DAY_MS,
+      archived_jobs_ttl_ms: 7 * DAY_MS,
+      // The published document leaves job_errors unset — kept forever.
+      job_errors_ttl_ms: null,
       task_metrics_ttl_ms: 7 * DAY_MS,
       dead_letter_ttl_ms: 30 * DAY_MS,
     });

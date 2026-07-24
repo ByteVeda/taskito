@@ -103,6 +103,21 @@ class DashboardRetentionTest {
     }
 
     @Test
+    void dryRunFollowsTheReportedPolicy(@TempDir Path dir) {
+        try (Taskito queue = queue(dir)) {
+            // Retention config lives in the worker here, so the no-candidate
+            // preview must follow the reported policy, not assume the defaults.
+            queue.setSetting(PUBLISHED_KEY, PUBLISHED);
+
+            RetentionPreview preview = queue.dryRunRetention();
+            assertTrue(preview.defaulted, "the published document says defaulted");
+            assertEquals(3 * DAY_MS, preview.windows.taskLogsMs);
+            // The published document leaves job_errors unset — kept forever.
+            assertEquals(null, preview.windows.jobErrorsMs);
+        }
+    }
+
+    @Test
     void dryRunPreviewsCandidateWindows(@TempDir Path dir) {
         try (Taskito queue = queue(dir)) {
             // Size a window before setting it: pass candidate windows, no worker
@@ -129,6 +144,20 @@ class DashboardRetentionTest {
             assertTrue(body.contains("\"total\":0"), body);
             assertTrue(body.contains("\"archived_jobs\":0"), body);
             assertTrue(body.contains("\"task_logs_ttl_ms\":259200000"), body);
+        }
+    }
+
+    @Test
+    void retentionDryRunEndpointEchoesTheReportedWindows(@TempDir Path dir) throws Exception {
+        try (Taskito queue = queue(dir);
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
+            queue.setSetting(PUBLISHED_KEY, PUBLISHED);
+
+            String body = client.get("/api/retention/dry-run").body();
+            assertTrue(body.contains("\"task_logs_ttl_ms\":259200000"), body);
+            // The published document leaves job_errors unset — kept forever.
+            assertTrue(body.contains("\"job_errors_ttl_ms\":null"), body);
         }
     }
 

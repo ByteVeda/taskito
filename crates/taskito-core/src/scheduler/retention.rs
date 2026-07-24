@@ -283,6 +283,46 @@ pub fn dry_run_json<S: Storage>(
     )?)?)
 }
 
+/// [`dry_run`] against the policy the elected cleaner *reported* for this
+/// namespace, falling back to the recommended defaults when no cleaner has
+/// swept yet. For shells whose queue handle carries no retention config
+/// (retention is a worker option there): the reported document is the policy
+/// that actually governs the deletes, so the preview follows it rather than
+/// assuming the defaults.
+pub fn dry_run_reported<S: Storage>(
+    storage: &S,
+    namespace: Option<&str>,
+    now: i64,
+) -> Result<RetentionPreview> {
+    let Some(published) = read_effective_retention(storage, namespace)? else {
+        return dry_run(storage, None, None, namespace, now);
+    };
+    let windows = published.windows.sanitized();
+    let counts = storage.count_expired_rows(&windows.cutoffs(now), now)?;
+    Ok(RetentionPreview {
+        enabled: !windows.is_empty(),
+        // The reporter knows whether its windows were the defaults; carry that
+        // through so the preview labels itself the same way the echo does.
+        defaulted: published.defaulted,
+        namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
+        reference_time: now,
+        windows,
+        total: counts.total(),
+        counts,
+    })
+}
+
+/// [`dry_run_reported`] serialized to the JSON document a shell forwards.
+pub fn dry_run_reported_json<S: Storage>(
+    storage: &S,
+    namespace: Option<&str>,
+    now: i64,
+) -> Result<String> {
+    Ok(serde_json::to_string(&dry_run_reported(
+        storage, namespace, now,
+    )?)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +419,36 @@ mod tests {
         assert_eq!(preview.reference_time, 1_753_200_000_000);
         assert!(preview.windows.archived_jobs_ttl_ms.is_some());
         assert_eq!(preview.total, 0, "an empty store has nothing to purge");
+    }
+
+    #[test]
+    fn dry_run_reported_follows_the_published_policy() {
+        let storage = crate::storage::sqlite::SqliteStorage::in_memory().unwrap();
+
+        // Unreported → falls back to the recommended defaults.
+        let preview = dry_run_reported(&storage, None, 1_753_200_000_000).unwrap();
+        assert!(preview.defaulted, "no report yet → defaults");
+
+        // A cleaner published explicit windows → the preview follows them.
+        let published = EffectiveRetention {
+            enabled: true,
+            defaulted: false,
+            namespace: DEFAULT_NAMESPACE.to_string(),
+            reported_at: 1_753_100_000_000,
+            windows: RetentionConfig {
+                task_logs_ttl_ms: Some(3_600_000),
+                ..RetentionConfig::default()
+            },
+        };
+        publish_effective_retention(&storage, None, &published).unwrap();
+
+        let preview = dry_run_reported(&storage, None, 1_753_200_000_000).unwrap();
+        assert!(!preview.defaulted, "published policy is not the defaults");
+        assert_eq!(preview.windows.task_logs_ttl_ms, Some(3_600_000));
+        assert_eq!(
+            preview.windows.archived_jobs_ttl_ms, None,
+            "tables the report leaves out keep forever"
+        );
     }
 
     #[test]

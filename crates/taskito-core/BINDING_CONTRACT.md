@@ -256,11 +256,14 @@ window without deleting anything. Computed in-process against live storage
 (unlike the echo above, which is published by a worker), so it always answers.
 
 - Shells call `scheduler::retention::dry_run_json(storage, retention, result_ttl_ms,
-  namespace, now)`. `retention`/`result_ttl_ms` are the windows to preview:
-  `None`/`None` previews the recommended defaults, an explicit `RetentionConfig`
-  previews those candidate windows (an empty one = a disabled policy). The public
-  surface is `dry_run_retention()` (Python) / `dryRunRetention()` (Node/Java),
-  each accepting optional candidate windows.
+  namespace, now)` for explicit windows, or `dry_run_reported_json(storage,
+  namespace, now)` to follow the policy the elected cleaner published (falling
+  back to the recommended defaults when unreported). The public surface is
+  `dry_run_retention()` (Python) / `dryRunRetention()` (Node/Java), each
+  accepting optional candidate windows (an empty config = a disabled policy).
+  **No-candidate semantics**: a shell whose queue handle carries retention
+  config previews that config; a shell where retention is a worker-only option
+  previews the *reported* policy — the one that actually governs the deletes.
 - **Document** (snake_case; windows in **milliseconds**, `null` = keep forever):
   `enabled`, `defaulted`, `namespace`, `reference_time` (the Unix-ms `now` the
   snapshot was taken at), `windows` (same fields as the echo), `counts` with

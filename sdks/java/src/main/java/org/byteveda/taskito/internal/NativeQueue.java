@@ -107,8 +107,9 @@ public final class NativeQueue {
 
     /**
      * Preview counts as JSON. {@code retentionJson} is a candidate retention
-     * spec (camelCase seconds) to preview those windows, or {@code null} for the
-     * recommended defaults.
+     * spec (camelCase seconds) to preview those windows; {@code null} previews
+     * the policy the elected cleaner reported for this namespace, falling back
+     * to the recommended defaults only when no cleaner has swept yet.
      */
     public static native String dryRunRetention(long handle, String retentionJson);
 

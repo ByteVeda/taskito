@@ -1247,13 +1247,14 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
 
   /**
    * Preview what a retention purge would delete right now, without deleting
-   * anything. With no argument the preview uses the recommended default
-   * windows; pass candidate `retention` windows to size a window before setting
-   * it — no worker reconfiguration needed. The counts are a point-in-time
-   * snapshot; nothing is deleted.
+   * anything. With no argument the preview follows the policy the elected
+   * cleaner reported for this namespace (recommended defaults only when no
+   * cleaner has swept yet); pass candidate `retention` windows to size a
+   * window before setting it — no worker reconfiguration needed. The counts
+   * are a point-in-time snapshot; nothing is deleted.
    */
-  dryRunRetention(retention?: RetentionOptions): RetentionPreview {
-    return parseRetentionPreview(this.native.dryRunRetention(retention));
+  async dryRunRetention(retention?: RetentionOptions): Promise<RetentionPreview> {
+    return parseRetentionPreview(await this.native.dryRunRetention(retention));
   }
 
   // ── Task & queue overrides (dashboard-tunable runtime config) ─────

@@ -691,6 +691,7 @@ impl PyQueue {
     #[pyo3(signature = (retention=None))]
     pub fn dry_run_retention(
         &self,
+        py: Python<'_>,
         retention: Option<std::collections::HashMap<String, i64>>,
     ) -> PyResult<String> {
         // Candidate windows override the queue's own config and the legacy TTL,
@@ -700,13 +701,18 @@ impl PyQueue {
             Some(map) => (build_retention_config(Some(map))?, None),
             None => (self.retention.clone(), self.result_ttl_ms),
         };
-        taskito_core::scheduler::retention::dry_run_json(
-            &self.storage,
-            config.as_ref(),
-            result_ttl_ms,
-            self.namespace.as_deref(),
-            taskito_core::job::now_millis(),
-        )
+        let storage = &self.storage;
+        let namespace = self.namespace.as_deref();
+        // Release the GIL: the counts scan every history table.
+        py.detach(|| {
+            taskito_core::scheduler::retention::dry_run_json(
+                storage,
+                config.as_ref(),
+                result_ttl_ms,
+                namespace,
+                taskito_core::job::now_millis(),
+            )
+        })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 

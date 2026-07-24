@@ -33,10 +33,10 @@ export function retention(queue: Queue) {
   };
 }
 
-/** Preview what a purge would delete under this queue's default windows,
- *  computed in-process, so it always answers (never the unreported state). */
-export function retentionDryRun(queue: Queue) {
-  const preview = queue.dryRunRetention();
+/** Preview what a purge would delete under the reported policy (recommended
+ *  defaults when unreported), computed in-process, so it always answers. */
+export async function retentionDryRun(queue: Queue) {
+  const preview = await queue.dryRunRetention();
   return {
     enabled: preview.enabled,
     defaulted: preview.defaulted,
