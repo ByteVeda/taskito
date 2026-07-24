@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Emitter } from "../events";
 import type { JsOutcome, NativeQueue } from "../native";
 import { type Serializer, serializeCall } from "../serializers";
 import { createLogger } from "../utils";
@@ -70,6 +71,27 @@ interface RunPlan {
 /** Node statuses still awaiting (or undergoing) compensation rollback. */
 const COMPENSABLE_STATUS = new Set(["completed", "cache_hit"]);
 
+/** Events a run can end with — narrower than EventName so a wrong
+ * name/payload pairing in the lookup below fails typecheck. */
+type RunTerminalEvent =
+  | "workflow.completed"
+  | "workflow.completed_with_failures"
+  | "workflow.failed"
+  | "workflow.cancelled"
+  | "workflow.compensated"
+  | "workflow.compensation_failed";
+
+/** Terminal run state (from the finalizer) → the event announcing it. */
+const TERMINAL_RUN_EVENTS: Record<string, RunTerminalEvent> = {
+  completed: "workflow.completed",
+  completed_with_failures: "workflow.completed_with_failures",
+  failed: "workflow.failed",
+  cancelled: "workflow.cancelled",
+};
+
+/** Terminal runs remembered by the emit-once guard before pruning the oldest. */
+const REPORTED_RUNS_CAP = 1000;
+
 /**
  * The runtime workflow brain. Driven from the worker's outcome callback, it
  * advances a run as each node-job settles. For plain DAGs the core scheduler
@@ -90,6 +112,8 @@ export class WorkflowTracker {
   private readonly gateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Cross-run store for cacheable step results. */
   private readonly cache: WorkflowCacheStore;
+  /** Runs whose terminal event already fired (bounded, insertion-ordered). */
+  private readonly reportedTerminal = new Set<string>();
 
   constructor(
     private readonly native: NativeQueue,
@@ -98,6 +122,8 @@ export class WorkflowTracker {
      *  jobs decode under the worker's unconditional codec reversal. */
     private readonly encodeCall: (taskName: string, args: unknown[]) => Uint8Array = (_, args) =>
       serializeCall(this.serializer, args),
+    /** Emits workflow lifecycle events; absent on throwaway trackers. */
+    private readonly emitter?: Emitter,
   ) {
     this.cache = new WorkflowCacheStore(native);
   }
@@ -109,8 +135,11 @@ export class WorkflowTracker {
       succeeded = true;
     } else if (outcome.kind === "dead") {
       succeeded = false;
+    } else if (outcome.kind === "cancelled") {
+      this.settleCancelledJob(outcome.jobId);
+      return;
     } else {
-      return; // retry / cancelled are not terminal for workflow advancement
+      return; // retry is not terminal for workflow advancement
     }
 
     try {
@@ -171,6 +200,25 @@ export class WorkflowTracker {
   }
 
   /**
+   * A cancelled node-job cannot advance its run, but it can strand it: once
+   * nothing else is in flight, try to finalize so the run still reaches a
+   * terminal state. A non-workflow job is left exactly as before (no-op).
+   * `workflow.cancelled` is reserved — this SDK has no run-cancellation API
+   * today, so it only fires when the finalizer reports a cancelled run.
+   */
+  private settleCancelledJob(jobId: string): void {
+    try {
+      const ref = this.native.workflowNodeForJob(jobId);
+      if (!ref) {
+        return; // not a workflow job
+      }
+      this.settle(ref.runId, this.native.finalizeRunIfTerminal(ref.runId));
+    } catch (error) {
+      log.error(() => `workflow cancel settle for ${jobId} failed`, error);
+    }
+  }
+
+  /**
    * Wrap up after a node settles. A failed run with compensable nodes starts a
    * saga rollback instead of finishing; otherwise the plan is evicted and, if
    * this run is a sub-workflow child, its parent node is resolved.
@@ -179,10 +227,38 @@ export class WorkflowTracker {
     if (finalState === "failed" && this.startCompensationIfEligible(runId)) {
       return; // run moved to `compensating`; it finalizes when rollback completes
     }
+    if (finalState !== null) {
+      const runError = this.native.getWorkflowRun(runId)?.error;
+      this.emitRunTerminal(runId, TERMINAL_RUN_EVENTS[finalState], finalState, runError);
+    }
     this.evictIfTerminal(runId, finalState);
     if (finalState !== null) {
       this.resolveParentIfChild(runId, finalState);
     }
+  }
+
+  /**
+   * Emit a run's terminal event exactly once. The guard set is bounded: past
+   * REPORTED_RUNS_CAP the oldest remembered run is pruned (insertion order),
+   * trading a sliver of dedup memory for a hard memory ceiling.
+   */
+  private emitRunTerminal(
+    runId: string,
+    event: RunTerminalEvent | undefined,
+    state: string,
+    error?: string,
+  ): void {
+    if (!this.emitter || !event || this.reportedTerminal.has(runId)) {
+      return;
+    }
+    this.reportedTerminal.add(runId);
+    if (this.reportedTerminal.size > REPORTED_RUNS_CAP) {
+      const oldest = this.reportedTerminal.values().next().value;
+      if (oldest !== undefined) {
+        this.reportedTerminal.delete(oldest);
+      }
+    }
+    this.emitter.emit(event, { runId, state, error });
   }
 
   /**
@@ -237,6 +313,7 @@ export class WorkflowTracker {
       return false;
     }
     this.native.setWorkflowRunState(runId, "compensating", null, null);
+    this.emitter?.emit("workflow.compensating", { runId, state: "compensating" });
     this.advanceCompensation(runId, plan);
     return true;
   }
@@ -279,10 +356,18 @@ export class WorkflowTracker {
 
     const failed = nodes.some((n) => compensable(n) && n.status === "compensation_failed");
     const now = Date.now();
+    // These terminal writes bypass settle(), so emit here — same emit-once guard.
     if (failed) {
       this.native.setWorkflowRunState(runId, "compensation_failed", "compensation failed", now);
+      this.emitRunTerminal(
+        runId,
+        "workflow.compensation_failed",
+        "compensation_failed",
+        "compensation failed",
+      );
     } else {
       this.native.setWorkflowRunState(runId, "compensated", null, now);
+      this.emitRunTerminal(runId, "workflow.compensated", "compensated");
     }
     this.plans.delete(runId);
   }
@@ -325,6 +410,7 @@ export class WorkflowTracker {
       meta.timeout_ms ?? DEFAULT_TIMEOUT_MS,
       meta.priority ?? 0,
     );
+    this.emitter?.emit("workflow.node_compensating", { runId, node });
   }
 
   /** Record a rollback's outcome and advance (or finalize) the saga. */
@@ -337,6 +423,7 @@ export class WorkflowTracker {
     const now = Date.now();
     if (succeeded) {
       this.native.setWorkflowNodeCompensated(runId, node, now);
+      this.emitter?.emit("workflow.node_compensated", { runId, node });
     } else {
       this.native.setWorkflowNodeCompensationFailed(
         runId,
@@ -344,6 +431,11 @@ export class WorkflowTracker {
         error ?? "compensation failed",
         now,
       );
+      this.emitter?.emit("workflow.node_compensation_failed", {
+        runId,
+        node,
+        error: error ?? "compensation failed",
+      });
     }
     const plan = this.plan(runId);
     if (plan) {
@@ -499,7 +591,7 @@ export class WorkflowTracker {
     for (const [name, b64] of Object.entries(child.nodePayloads)) {
       payloads[name] = Buffer.from(b64, "base64");
     }
-    this.native.submitWorkflow(
+    const childRunId = this.native.submitWorkflow(
       child.name,
       child.version,
       Buffer.from(child.dag, "base64"),
@@ -512,12 +604,18 @@ export class WorkflowTracker {
       node,
     );
     this.native.setWorkflowNodeRunning(runId, node);
+    this.emitter?.emit("workflow.submitted", {
+      runId: childRunId,
+      name: child.name,
+      parentRunId: runId,
+    });
   }
 
   /** Park a gate node at `waiting_approval` and arm its timeout, if any. */
   private enterGate(runId: string, node: string, meta: StepMeta): void {
     this.native.setWorkflowNodeWaitingApproval(runId, node);
     const gate: GateConfig = meta.gate ? JSON.parse(meta.gate) : {};
+    this.emitter?.emit("workflow.gate_reached", { runId, node, message: gate.message });
     if (!gate.timeoutMs || gate.timeoutMs <= 0) {
       return;
     }

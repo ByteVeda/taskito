@@ -21,7 +21,7 @@ import {
   SerializationError,
   TaskitoError,
 } from "./errors";
-import { Emitter, type EventHandler, type EventName } from "./events";
+import { Emitter, type EventMap, type EventName } from "./events";
 import { type Interception, InterceptionMetrics, type Interceptor } from "./interception";
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
@@ -192,6 +192,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
         this.serializer,
         this.trackerIfSupported(),
         (taskName, value) => this.encodeTaskPayload(taskName, value),
+        this.emitter,
       );
     }
     return this.workflowManager;
@@ -202,8 +203,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     if (typeof this.native.markWorkflowNodeResult !== "function") {
       return undefined;
     }
-    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer, (taskName, args) =>
-      this.encodeTaskPayload(taskName, args),
+    this.workflowTracker ??= new WorkflowTracker(
+      this.native,
+      this.serializer,
+      (taskName, args) => this.encodeTaskPayload(taskName, args),
+      this.emitter,
     );
     return this.workflowTracker;
   }
@@ -502,13 +506,13 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this;
   }
 
-  /** Subscribe to a job lifecycle event. */
-  on(event: EventName, handler: EventHandler): void {
+  /** Subscribe to a queue event (job, worker, queue, workflow, predicate). */
+  on<E extends EventName>(event: E, handler: (event: EventMap[E]) => void): void {
     this.emitter.on(event, handler);
   }
 
-  /** Unsubscribe from a job lifecycle event. */
-  off(event: EventName, handler: EventHandler): void {
+  /** Unsubscribe from a queue event. */
+  off<E extends EventName>(event: E, handler: (event: EventMap[E]) => void): void {
     this.emitter.off(event, handler);
   }
 
@@ -522,7 +526,9 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   ): string {
     this.rejectIfQueueFull(options?.queue ?? "default");
     const { taskName, payload, options: nativeOpts } = this.prepareEnqueue(name, args, options);
-    return this.native.enqueue(taskName, payload, nativeOpts);
+    const jobId = this.native.enqueue(taskName, payload, nativeOpts);
+    this.emitter.emit("job.enqueued", { jobId, taskName, queue: nativeOpts.queue ?? "default" });
+    return jobId;
   }
 
   /**
@@ -568,7 +574,17 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       });
       return { payload, options };
     });
-    return this.native.enqueueMany(name, prepared);
+    const jobIds = this.native.enqueueMany(name, prepared);
+    // One event per created job, in input order. The batch path rejects
+    // redirects, so every job carries the caller's task name.
+    jobIds.forEach((jobId, index) => {
+      this.emitter.emit("job.enqueued", {
+        jobId,
+        taskName: name,
+        queue: prepared[index]?.options.queue ?? "default",
+      });
+    });
+    return jobIds;
   }
 
   // ── Topic pub/sub ─────────────────────────────────────────────────
@@ -853,6 +869,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     // Gate: predicates see the (possibly rewritten) args and may reject the enqueue.
     for (const gate of this.gates.get(taskName) ?? []) {
       if (!gate({ taskName, args: ctx.args })) {
+        this.emitter.emit("predicate.rejected", { taskName });
         throw new PredicateRejectedError(taskName);
       }
     }
@@ -1203,11 +1220,13 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Pause a queue — workers stop dispatching its jobs until resumed. */
   pauseQueue(queue: string): void {
     this.native.pauseQueue(queue);
+    this.emitter.emit("queue.paused", { queue });
   }
 
   /** Resume a paused queue. */
   resumeQueue(queue: string): void {
     this.native.resumeQueue(queue);
+    this.emitter.emit("queue.resumed", { queue });
   }
 
   /** Names of currently-paused queues. */

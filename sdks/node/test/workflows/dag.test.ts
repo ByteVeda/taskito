@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Queue, type Worker } from "../../src/index";
+import { Queue, type Worker, type WorkflowEvent } from "../../src/index";
 
 let worker: Worker | undefined;
 
@@ -95,6 +95,55 @@ it("skips a static successor of a failed step in a managed run", async () => {
   expect(status.next).toBe("skipped");
   expect(status.recover).toBe("completed");
   expect(ran).toEqual(["recover"]);
+});
+
+// 30s budget: a cold Windows CI runner has blown the global 15s on this test.
+it("emits workflow.submitted and one workflow.completed", { timeout: 30_000 }, async () => {
+  const queue = freshQueue();
+  const submitted: WorkflowEvent[] = [];
+  const completed: WorkflowEvent[] = [];
+  queue.on("workflow.submitted", (event) => submitted.push(event));
+  queue.on("workflow.completed", (event) => completed.push(event));
+  queue.task("noop", () => 1);
+
+  const handle = queue.workflows.define("events-happy").step("only", "noop").submit();
+  expect(submitted).toEqual([{ runId: handle.runId, name: "events-happy" }]);
+
+  worker = queue.runWorker();
+  await handle.wait({ timeoutMs: 8000 });
+  // Let any trailing outcome callbacks land before checking for duplicates.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  expect(completed).toHaveLength(1);
+  expect(completed[0]).toEqual({
+    runId: handle.runId,
+    state: "completed",
+    error: undefined,
+  });
+});
+
+it("emits workflow.failed once for a failing run", async () => {
+  const queue = freshQueue();
+  const failed: WorkflowEvent[] = [];
+  queue.on("workflow.failed", (event) => failed.push(event));
+  queue.task("boom", () => {
+    throw new Error("kaboom");
+  });
+
+  const handle = queue.workflows
+    .define("events-failing")
+    .step("only", "boom", { maxRetries: 0 })
+    .submit();
+
+  worker = queue.runWorker();
+  const run = await handle.wait({ timeoutMs: 8000 });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  expect(run.state).toBe("failed");
+  expect(failed).toHaveLength(1);
+  expect(failed[0]?.runId).toBe(handle.runId);
+  expect(failed[0]?.state).toBe("failed");
+  expect(failed[0]?.error).toBeTruthy();
 });
 
 it("lists submitted runs and filters by state", async () => {

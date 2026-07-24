@@ -2,7 +2,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { type Middleware, type OutcomeEvent, Queue, type Worker } from "../../src/index";
+import {
+  type EnqueuedEvent,
+  type Middleware,
+  type OutcomeEvent,
+  Queue,
+  type Worker,
+} from "../../src/index";
 
 let worker: Worker | undefined;
 
@@ -117,4 +123,49 @@ it("emits job.dead and runs onDeadLetter for an exhausted task", async () => {
 
   expect(await waitFor(() => dead.length > 0)).toBe(true);
   expect(onDeadLetter).toBeGreaterThanOrEqual(1);
+});
+
+it("emits job.failed once per attempt with the error and duration", async () => {
+  const queue = newQueue();
+  const failed: OutcomeEvent[] = [];
+  const retrying: OutcomeEvent[] = [];
+  const dead: OutcomeEvent[] = [];
+  queue.on("job.failed", (event) => failed.push(event));
+  queue.on("job.retrying", (event) => retrying.push(event));
+  queue.on("job.dead", (event) => dead.push(event));
+  queue.task(
+    "flaky",
+    () => {
+      throw new Error("attempt boom");
+    },
+    { maxRetries: 1, retryBackoff: { baseMs: 25, maxMs: 50 } },
+  );
+
+  const jobId = queue.enqueue("flaky");
+  worker = queue.runWorker();
+
+  // maxRetries 1 = two attempts: each fails, one retry verdict, then dead.
+  expect(await waitFor(() => dead.length === 1)).toBe(true);
+  expect(await waitFor(() => failed.length === 2)).toBe(true);
+  expect(retrying).toHaveLength(1);
+  for (const event of failed) {
+    expect(event.jobId).toBe(jobId);
+    expect(event.taskName).toBe("flaky");
+    expect(event.error).toContain("attempt boom");
+    expect(event.durationMs).toBeGreaterThanOrEqual(0);
+  }
+});
+
+it("emits job.enqueued from enqueue and enqueueMany", () => {
+  const queue = newQueue();
+  const enqueued: EnqueuedEvent[] = [];
+  queue.on("job.enqueued", (event) => enqueued.push(event));
+  queue.task("add", (a: number, b: number) => a + b);
+
+  const jobId = queue.enqueue("add", [1, 2], { queue: "emails" });
+  expect(enqueued).toEqual([{ jobId, taskName: "add", queue: "emails" }]);
+
+  const jobIds = queue.enqueueMany("add", [{ args: [3, 4] }, { args: [5, 6] }]);
+  expect(enqueued.slice(1).map((event) => event.jobId)).toEqual(jobIds);
+  expect(enqueued.slice(1).every((event) => event.queue === "default")).toBe(true);
 });

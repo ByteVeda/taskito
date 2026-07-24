@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Queue, type Worker } from "../../src/index";
+import { Queue, type Worker, type WorkflowEvent } from "../../src/index";
 
 let worker: Worker | undefined;
 
@@ -56,6 +56,37 @@ it("runs a child workflow as a node and advances the parent on completion", asyn
   const children = queue.workflows.children(handle.runId);
   expect(children).toHaveLength(1);
   expect(children[0]?.state).toBe("completed");
+});
+
+it("emits workflow.submitted for the child carrying parentRunId", async () => {
+  const queue = freshQueue();
+  const submitted: WorkflowEvent[] = [];
+  queue.on("workflow.submitted", (event) => submitted.push(event));
+
+  queue.task("prep", () => 1);
+  queue.task("childA", () => 2);
+
+  const child = queue.workflows.define("child-events").step("a", "childA").build();
+  const handle = queue.workflows
+    .define("parent-events")
+    .step("prep", "prep")
+    .subWorkflow("sub", { after: "prep", workflow: child })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+  const run = await handle.wait({ timeoutMs: 10_000 });
+  expect(run.state).toBe("completed");
+
+  const parentEvent = submitted.find((event) => event.runId === handle.runId);
+  expect(parentEvent).toEqual({ runId: handle.runId, name: "parent-events" });
+
+  const childRunId = queue.workflows.children(handle.runId)[0]?.id;
+  const childEvent = submitted.find((event) => event.runId === childRunId);
+  expect(childEvent).toEqual({
+    runId: childRunId,
+    name: "child-events",
+    parentRunId: handle.runId,
+  });
 });
 
 it("fails the parent node and skips downstream when the child fails", async () => {

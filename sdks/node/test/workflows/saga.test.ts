@@ -77,6 +77,69 @@ it("ends in compensation_failed when a compensator fails", async () => {
   expect(nodesByName(handle).reserve?.status).toBe("compensation_failed");
 });
 
+it("emits the compensation events in order for a successful rollback", async () => {
+  const queue = freshQueue();
+  const seen: string[] = [];
+  queue.on("workflow.compensating", (event) => seen.push(`compensating:${event.state}`));
+  queue.on("workflow.node_compensating", (event) => seen.push(`node_compensating:${event.node}`));
+  queue.on("workflow.node_compensated", (event) => seen.push(`node_compensated:${event.node}`));
+  queue.on("workflow.compensated", (event) => seen.push(`compensated:${event.state}`));
+
+  queue.task("reserve", () => "reservation");
+  queue.task("ship", () => {
+    throw new Error("out of stock");
+  });
+  queue.task("unreserve", () => 1);
+
+  const handle = queue.workflows
+    .define("saga-events")
+    .step("reserve", "reserve", { compensate: "unreserve" })
+    .step("ship", "ship", { after: "reserve", maxRetries: 0 })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+  const run = await handle.wait({ timeoutMs: 10_000 });
+
+  expect(run.state).toBe("compensated");
+  expect(seen).toEqual([
+    "compensating:compensating",
+    "node_compensating:reserve",
+    "node_compensated:reserve",
+    "compensated:compensated",
+  ]);
+});
+
+it("emits node_compensation_failed and compensation_failed when a compensator fails", async () => {
+  const queue = freshQueue();
+  const seen: string[] = [];
+  queue.on("workflow.node_compensation_failed", (event) =>
+    seen.push(`node_compensation_failed:${event.node}:${event.error ? "err" : "none"}`),
+  );
+  queue.on("workflow.compensation_failed", (event) =>
+    seen.push(`compensation_failed:${event.error ? "err" : "none"}`),
+  );
+
+  queue.task("reserve", () => 1);
+  queue.task("ship", () => {
+    throw new Error("nope");
+  });
+  queue.task("unreserve", () => {
+    throw new Error("rollback failed");
+  });
+
+  const handle = queue.workflows
+    .define("saga-events-bad-rollback")
+    .step("reserve", "reserve", { compensate: "unreserve", maxRetries: 0 })
+    .step("ship", "ship", { after: "reserve", maxRetries: 0 })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+  const run = await handle.wait({ timeoutMs: 10_000 });
+
+  expect(run.state).toBe("compensation_failed");
+  expect(seen).toEqual(["node_compensation_failed:reserve:err", "compensation_failed:err"]);
+});
+
 it("fails normally with no compensation when no step declares a compensator", async () => {
   const queue = freshQueue();
 

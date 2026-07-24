@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Emitter, EventName, OutcomeEvent } from "../events";
+import { type Emitter, EVENT_NAMES, type EventName, type EventPayload } from "../events";
 import type { NativeQueue } from "../native";
 import { createLogger } from "../utils";
 import { Deliverer } from "./deliverer";
@@ -8,8 +8,6 @@ import { WebhookValidationError } from "./errors";
 import { WebhookStore } from "./store";
 import type { Delivery, Webhook, WebhookInput } from "./types";
 import { assertSafeWebhookUrl } from "./urlSafety";
-
-const ALL_EVENTS: EventName[] = ["job.completed", "job.retrying", "job.dead", "job.cancelled"];
 
 const log = createLogger("webhooks");
 const DEFAULT_MAX_RETRIES = 3;
@@ -45,14 +43,14 @@ export class WebhookManager {
   constructor(native: NativeQueue, emitter: Emitter) {
     this.store = new WebhookStore(native);
     this.deliveryLog = new DeliveryLog(native);
-    for (const event of ALL_EVENTS) {
+    for (const event of EVENT_NAMES) {
       emitter.on(event, (payload) => this.dispatch(event, payload));
     }
   }
 
   /** The event names a webhook can subscribe to. */
   eventTypes(): EventName[] {
-    return [...ALL_EVENTS];
+    return [...EVENT_NAMES];
   }
 
   create(input: WebhookInput): Webhook {
@@ -155,15 +153,13 @@ export class WebhookManager {
     if (!webhook || !original) {
       return undefined;
     }
-    const payload = { ...original.payload, replay_of: original.id } as OutcomeEvent & {
-      replay_of: string;
-    };
+    const payload: Record<string, unknown> = { ...original.payload, replay_of: original.id };
     const delivery = await this.deliverer.deliver(webhook, original.event, payload);
     this.deliveryLog.record(delivery);
     return delivery;
   }
 
-  private dispatch(event: EventName, payload: OutcomeEvent): void {
+  private dispatch(event: EventName, payload: EventPayload): void {
     this.cache ??= this.store.list();
     for (const webhook of this.cache) {
       if (!webhook.enabled) {
@@ -172,9 +168,12 @@ export class WebhookManager {
       if (webhook.events.length > 0 && !webhook.events.includes(event)) {
         continue;
       }
+      // A task filter only applies to events that carry a task name — worker,
+      // queue, and workflow events pass through to task-filtered webhooks.
       if (
         webhook.taskFilter &&
         webhook.taskFilter.length > 0 &&
+        "taskName" in payload &&
         !webhook.taskFilter.includes(payload.taskName)
       ) {
         continue;

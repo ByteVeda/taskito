@@ -7,7 +7,7 @@ import {
   OverridesStore,
 } from "./dashboard/stores";
 import { SerializationError, TaskNotRegisteredError } from "./errors";
-import type { Emitter, EventName, OutcomeEvent } from "./events";
+import { type Emitter, OUTCOME_KIND_EVENTS, type OutcomeEvent } from "./events";
 import type { Middleware, TaskContext } from "./middleware";
 import type {
   JsOutcome,
@@ -41,12 +41,13 @@ const CANCEL_POLL_INTERVAL_MS = 200;
 /** How often the worker heartbeats (with resource health) to storage. */
 const HEARTBEAT_INTERVAL_MS = 5000;
 
-/** Outcome kind -> event name + the middleware hook it triggers. */
-const OUTCOMES: Record<string, { event: EventName; hook: keyof Middleware }> = {
-  success: { event: "job.completed", hook: "onCompleted" },
-  retry: { event: "job.retrying", hook: "onRetry" },
-  dead: { event: "job.dead", hook: "onDeadLetter" },
-  cancelled: { event: "job.cancelled", hook: "onCancel" },
+/** Outcome kind -> the middleware hook it triggers (events come from
+ *  {@link OUTCOME_KIND_EVENTS}). */
+const OUTCOME_HOOKS: Record<keyof typeof OUTCOME_KIND_EVENTS, keyof Middleware> = {
+  success: "onCompleted",
+  retry: "onRetry",
+  dead: "onDeadLetter",
+  cancelled: "onCancel",
 };
 
 /** Inputs assembled by {@link Queue.runWorker}. */
@@ -86,6 +87,9 @@ export class Worker {
     private readonly resources: ResourceRuntime,
     private readonly heartbeat: ReturnType<typeof setInterval>,
     private readonly consumerStops: readonly (() => void)[],
+    private readonly emitter: Emitter,
+    /** Shared with the heartbeat closure so a beat resolving after stop() stays silent. */
+    private readonly lifecycle: { stopped: boolean },
   ) {}
 
   /**
@@ -179,6 +183,7 @@ export class Worker {
         return task.handler(...args);
       };
 
+      const startedAt = performance.now();
       try {
         for (const mw of chain) {
           await mw.before?.(ctx);
@@ -199,7 +204,16 @@ export class Worker {
         // Resolve rather than reject: a rejection carries only a string, and the
         // native layer needs the retry verdict alongside the canonical
         // structured-error JSON it stores as the job's error.
-        return { error: encodeTaskError(error), retryable: isRetryable(task, error) };
+        const encoded = encodeTaskError(error);
+        // One `job.failed` per failed attempt (the retry/dead verdict follows
+        // as its own outcome event once the scheduler settles the job).
+        emitter.emit("job.failed", {
+          jobId: invocation.id,
+          taskName: invocation.taskName,
+          error: encoded,
+          durationMs: performance.now() - startedAt,
+        });
+        return { error: encoded, retryable: isRetryable(task, error) };
       } finally {
         clearInterval(poller);
         try {
@@ -212,10 +226,12 @@ export class Worker {
     };
 
     const outcomeCallback = (outcome: JsOutcome): void => {
-      const mapping = OUTCOMES[outcome.kind];
-      if (!mapping) {
+      const kind = outcome.kind as keyof typeof OUTCOME_KIND_EVENTS;
+      const eventName = OUTCOME_KIND_EVENTS[kind];
+      if (!eventName) {
         return;
       }
+      const hookName = OUTCOME_HOOKS[kind];
       const event: OutcomeEvent = {
         jobId: outcome.jobId,
         taskName: outcome.taskName,
@@ -225,17 +241,17 @@ export class Worker {
         timedOut: outcome.timedOut ?? undefined,
         durationMs: outcome.durationMs ?? undefined,
       };
-      emitter.emit(mapping.event, event);
+      emitter.emit(eventName, event);
       for (const mw of middlewareFor(outcome.taskName)) {
-        const hook = mw[mapping.hook] as ((e: OutcomeEvent) => void) | undefined;
+        const hook = mw[hookName] as ((e: OutcomeEvent) => void) | undefined;
         try {
           // Promise.resolve captures async hooks' rejections too.
           void Promise.resolve(hook?.(event)).catch((error) => {
-            log.debug(() => `${mapping.hook} middleware hook rejected for ${outcome.jobId}`, error);
+            log.debug(() => `${hookName} middleware hook rejected for ${outcome.jobId}`, error);
           });
         } catch (error) {
           // outcome hook errors must not break the worker
-          log.debug(() => `${mapping.hook} middleware hook threw for ${outcome.jobId}`, error);
+          log.debug(() => `${hookName} middleware hook threw for ${outcome.jobId}`, error);
         }
       }
       tracker?.onOutcome(outcome);
@@ -258,6 +274,7 @@ export class Worker {
       pushDispatch: run?.pushDispatch,
     };
     const native = queue.runWorker(taskCallback, outcomeCallback, nativeOptions);
+    emitter.emit("worker.started", { workerId: native.id, queues: run?.queues });
     // Lease the shared resource runtime only once the native worker actually
     // started, so its worker-scoped values survive until the last worker on this
     // queue stops (see ResourceRuntime). A failed start leaks no lease.
@@ -292,11 +309,48 @@ export class Worker {
     // Heartbeat with current resource health so inspection (and dead-worker
     // reaping) see this worker as alive. Failures are logged, never thrown —
     // the next beat retries. First beat goes out immediately.
+    let onlineReported = false;
+    const previousUnhealthy = new Set<string>();
+    const lifecycle = { stopped: false };
     const sendHeartbeat = (): void => {
       const snapshot = resources.healthSnapshot();
-      void queue.workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot)).catch((error) => {
-        log.debug(() => "worker heartbeat failed", error);
-      });
+      void queue
+        .workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot))
+        .then((reapedWorkerIds) => {
+          // A beat that resolves after stop() must not emit lifecycle events
+          // out of order (clearInterval can't cancel an in-flight promise).
+          if (lifecycle.stopped) {
+            return;
+          }
+          // Online = the first heartbeat storage acknowledged, once.
+          if (!onlineReported) {
+            onlineReported = true;
+            emitter.emit("worker.online", { workerId: native.id });
+          }
+          // The heartbeat doubles as the dead-worker reaper: each reaped peer
+          // id is reported as that worker going offline.
+          for (const workerId of reapedWorkerIds) {
+            emitter.emit("worker.offline", { workerId });
+          }
+        })
+        .catch((error) => {
+          log.debug(() => "worker heartbeat failed", error);
+        });
+      // Report each resource's healthy → unhealthy transition exactly once.
+      const unhealthy = new Set(
+        Object.entries(snapshot ?? {})
+          .filter(([, state]) => state === "unhealthy")
+          .map(([name]) => name),
+      );
+      for (const resource of unhealthy) {
+        if (!previousUnhealthy.has(resource)) {
+          emitter.emit("worker.unhealthy", { workerId: native.id, resource });
+        }
+      }
+      previousUnhealthy.clear();
+      for (const resource of unhealthy) {
+        previousUnhealthy.add(resource);
+      }
       // Same cadence, same reaper election: passing this worker's id gates the
       // sweep so only the leader runs it. Per-tick failures are swallowed like
       // the heartbeat's — the next beat retries.
@@ -306,17 +360,18 @@ export class Worker {
       declareSubscriptions();
     };
     sendHeartbeat();
-    const heartbeat = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+    const heartbeat = setInterval(sendHeartbeat, run?.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
 
     // Managed log-topic consumers: one poll loop each, beside the heartbeat.
     const consumerStops = startLogConsumers(queue, serializer, params.logConsumers ?? []);
 
-    return new Worker(native, queue, resources, heartbeat, consumerStops);
+    return new Worker(native, queue, resources, heartbeat, consumerStops, emitter, lifecycle);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
+    this.lifecycle.stopped = true;
     // One last sweep for orphaned ephemeral subscriptions before this worker's
     // reap cadence goes away. Best effort — stopping must never throw.
     void this.queue.reapEphemeralSubscriptions().catch((error) => {
@@ -327,6 +382,7 @@ export class Worker {
       stop();
     }
     this.native.stop();
+    this.emitter.emit("worker.stopped", { workerId: this.native.id });
     // Dispose worker-scoped resources after the native worker quiesces (the
     // teardown drains the runtime's health checker before touching caches).
     // Best effort: lazy resources mean this is a no-op when none were built.

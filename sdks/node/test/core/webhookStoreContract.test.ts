@@ -88,6 +88,24 @@ it("reads a subscription written by another runtime", () => {
   expect(queue.webhooks.list()).toHaveLength(1);
 });
 
+it("round-trips the expanded event names", () => {
+  const queue = newQueue();
+  const events = [
+    "job.enqueued",
+    "worker.online",
+    "queue.paused",
+    "workflow.gate_reached",
+    "predicate.rejected",
+  ] as const;
+  const created = queue.webhooks.create({
+    url: "https://example.com/hook",
+    events: [...events],
+  });
+
+  expect(rows(queue)[0]?.events).toEqual([...events]);
+  expect(queue.webhooks.get(created.id)?.events).toEqual([...events]);
+});
+
 it("keeps event names it does not model", () => {
   const queue = newQueue();
   queue.setSetting(
