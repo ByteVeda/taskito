@@ -97,7 +97,8 @@ it("skips a static successor of a failed step in a managed run", async () => {
   expect(ran).toEqual(["recover"]);
 });
 
-it("emits workflow.submitted and one workflow.completed", async () => {
+// 30s budget: a cold Windows CI runner has blown the global 15s on this test.
+it("emits workflow.submitted and one workflow.completed", { timeout: 30_000 }, async () => {
   const queue = freshQueue();
   const submitted: WorkflowEvent[] = [];
   const completed: WorkflowEvent[] = [];
