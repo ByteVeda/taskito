@@ -58,7 +58,7 @@ def test_sub_workflow_executes(queue: Queue, workflow_worker: WorkflowWorkerFact
 
 
 def test_sub_workflow_emits_submitted_event(
-    queue: Queue, workflow_worker: WorkflowWorkerFactory
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
 ) -> None:
     """Child submission emits WORKFLOW_SUBMITTED carrying parent_run_id."""
 
@@ -81,6 +81,11 @@ def test_sub_workflow_emits_submitted_event(
     with workflow_worker():
         run = queue.submit_workflow(wf)
         run.wait(timeout=20)
+        # Event-bus dispatch is asynchronous — the callback may lag run completion.
+        poll_until(
+            lambda: any(e.get("parent_run_id") == run.id for e in events),
+            message="child WORKFLOW_SUBMITTED was not delivered",
+        )
 
     child_events = [e for e in events if e.get("parent_run_id") == run.id]
     assert len(child_events) == 1
