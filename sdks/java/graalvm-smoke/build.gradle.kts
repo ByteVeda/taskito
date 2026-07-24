@@ -14,6 +14,9 @@ repositories {
 
 dependencies {
     implementation(project(":"))
+    // The runtime jar is native-free (natives publish as classifier artifacts);
+    // consume the staged host-platform library directly from the root build.
+    runtimeOnly(project(mapOf("path" to ":", "configuration" to "nativeRuntime")))
 }
 
 application {

@@ -117,10 +117,18 @@ dependencies {
 }
 
 // --- Native (Rust cdylib) -------------------------------------------------
+// The main jar is native-free: each platform's cdylib ships as a classifier
+// artifact of the same coordinate (e.g. `taskito-<v>-linux-x86_64.jar`), and
+// NativeLoader resolves the right one from the classpath at runtime. The
+// classifier-free jar stays usable for consumers that supply their own build
+// via `-Dtaskito.native.lib`.
 
 val crateDir = layout.projectDirectory.dir("../../crates/taskito-java")
 val cargoTargetDir = layout.projectDirectory.dir("../../target")
 val nativeStaging = layout.buildDirectory.dir("native")
+
+/** Every platform published as a native classifier artifact. */
+val nativePlatforms = listOf("linux-x86_64", "linux-aarch64", "osx-x86_64", "osx-aarch64", "windows-x86_64")
 
 // Build the native library for the local platform.
 val cargoBuild = tasks.register<Exec>("cargoBuild") {
@@ -137,15 +145,59 @@ val copyNative = tasks.register<Copy>("copyNative") {
     into(nativeStaging.map { it.dir("org/byteveda/taskito/native/${platformClassifier()}") })
 }
 
-sourceSets["main"].resources.srcDir(nativeStaging)
-tasks.named("processResources") { dependsOn(copyNative) }
-// The sources jar (added by the publish plugin) also packages the main
-// resource srcDirs, so any Jar task reads the staged native dir. Wire the
-// dependency lazily — sourcesJar is registered after this script evaluates.
-tasks.withType<Jar>().configureEach { dependsOn(copyNative) }
-// Sources jar ships sources only — cdylibs + dashboard already ship in the main jar.
+// Tests load the native through the same classpath lookup consumers use, so
+// put the staged dir (not the jar) on the test runtime classpath.
+tasks.named<Test>("test") {
+    dependsOn(copyNative)
+    classpath += files(nativeStaging)
+}
+
+// Sibling modules that exercise the native at runtime (graalvm-smoke) consume
+// the staged dir through this configuration instead of the runtime jar.
+val nativeRuntime by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(nativeRuntime.name, nativeStaging) { builtBy(copyNative) }
+
+// One classifier jar per platform, packaging exactly that platform's library.
+// CI stages all five under build/native before publishing; locally only the
+// host platform's jar is buildable (via copyNative).
+val nativeJars = nativePlatforms.map { platform ->
+    val camel = platform.split("-").joinToString("") { part -> part.replaceFirstChar(Char::uppercase) }
+    tasks.register<Jar>("nativeJar$camel") {
+        archiveClassifier.set(platform)
+        from(nativeStaging) { include("org/byteveda/taskito/native/$platform/**") }
+        if (platform == platformClassifier()) {
+            dependsOn(copyNative)
+        }
+        doFirst {
+            val staged = nativeStaging.get().dir("org/byteveda/taskito/native/$platform").asFile
+            if (staged.listFiles().isNullOrEmpty()) {
+                throw GradleException(
+                    "no native library staged for $platform under build/native — " +
+                        "CI stages prebuilt binaries for all platforms; locally only " +
+                        "the host platform is available (:copyNative)"
+                )
+            }
+        }
+    }
+}
+
+tasks.register("nativeJars") {
+    description = "Builds every per-platform native classifier jar."
+    dependsOn(nativeJars)
+}
+
+publishing {
+    publications.withType<MavenPublication>().configureEach {
+        nativeJars.forEach { artifact(it) }
+    }
+}
+
+// Sources jar ships sources only — the dashboard SPA ships in the main jar.
 tasks.withType<Jar>().matching { it.name == "sourcesJar" }.configureEach {
-    exclude("org/byteveda/taskito/native/**", "org/byteveda/taskito/dashboard/**")
+    exclude("org/byteveda/taskito/dashboard/**")
 }
 
 // --- FFM fast-path overlay (Multi-Release JAR) ----------------------------

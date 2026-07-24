@@ -48,6 +48,9 @@ val springBoot = "3.3.5"
 
 dependencies {
     api(project(":"))
+    // The runtime jar is native-free; tests auto-configure a real Taskito bean,
+    // so stage the host-platform library from the root build.
+    testRuntimeOnly(project(mapOf("path" to ":", "configuration" to "nativeRuntime")))
     compileOnly("org.springframework.boot:spring-boot-autoconfigure:$springBoot")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:$springBoot")
 
