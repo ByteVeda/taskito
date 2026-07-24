@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from taskito.events import EventType
 from taskito.workflows.builder import Workflow, WorkflowProxy
 from taskito.workflows.incremental import compute_dirty_set
 from taskito.workflows.run import WorkflowRun
@@ -89,6 +90,12 @@ class QueueWorkflowMixin:
             None,  # parent_node_name
             cache_hit_nodes,
         )
+
+        if hasattr(self, "_emit_event"):
+            self._emit_event(
+                EventType.WORKFLOW_SUBMITTED,
+                {"run_id": handle.run_id, "workflow_name": handle.name},
+            )
 
         # Register with the tracker when the workflow needs Python-side
         # orchestration (deferred nodes, conditions, gates, or continue mode).
