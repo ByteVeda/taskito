@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.support.DashboardError;
+import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WebhookException;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.webhooks.Webhook;
@@ -74,7 +75,7 @@ public final class WebhooksHandlers {
         }
         if (body.containsKey("events")) {
             update.events(parseEvents(body.get("events")).stream()
-                    .map(WebhooksHandlers::wireName)
+                    .map(EventName::wireName)
                     .collect(Collectors.toList()));
         }
         if (body.containsKey("task_filter")) {
@@ -164,13 +165,23 @@ public final class WebhooksHandlers {
             if (!(item instanceof String name)) {
                 throw DashboardError.badRequest("events_must_be_strings");
             }
-            try {
-                events.add(EventName.valueOf(name.toUpperCase(Locale.ROOT)));
-            } catch (IllegalArgumentException e) {
-                throw DashboardError.badRequest("unknown_event");
-            }
+            events.add(parseEvent(name));
         }
         return events;
+    }
+
+    /** Accept dotted wire names, the legacy outcome aliases, and the old UPPER enum names. */
+    private static EventName parseEvent(String name) {
+        try {
+            return EventName.fromWire(name);
+        } catch (SerializationException e) {
+            // Fall through to the pre-taxonomy UPPER enum spelling.
+        }
+        try {
+            return EventName.valueOf(name.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw DashboardError.badRequest("unknown_event");
+        }
     }
 
     private static Map<String, String> headers(Object raw) {
@@ -250,9 +261,5 @@ public final class WebhooksHandlers {
         } catch (NumberFormatException e) {
             throw DashboardError.badRequest("invalid_" + key);
         }
-    }
-
-    private static String wireName(EventName name) {
-        return name.name().toLowerCase(Locale.ROOT);
     }
 }

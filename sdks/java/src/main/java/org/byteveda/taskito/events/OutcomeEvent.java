@@ -1,7 +1,7 @@
 package org.byteveda.taskito.events;
 
 /** A finished job's outcome. {@code error} is null on success/cancel; {@code retryCount} is -1 when N/A. */
-public final class OutcomeEvent {
+public final class OutcomeEvent implements TaskitoEvent {
     public final EventName name;
     public final String jobId;
     public final String taskName;
@@ -31,6 +31,11 @@ public final class OutcomeEvent {
         this.retryCount = retryCount;
         this.timedOut = timedOut;
         this.wallTimeNs = wallTimeNs;
+    }
+
+    @Override
+    public EventName name() {
+        return name;
     }
 
     /**

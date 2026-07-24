@@ -118,7 +118,11 @@ final class WorkerDispatchBridge implements WorkerBridge {
                 m.onError(context, t);
             }
             // Canonical structured error (middleware above saw the live Throwable).
-            bound.failJob(token, TaskErrors.encode(t), RetryDecision.isRetryable(task.retryOn, t));
+            String encoded = TaskErrors.encode(t);
+            // job.failed fires per attempt, before the retry/dead-letter decision
+            // lands as its own outcome. Listener-only: no middleware fan-out.
+            emitter.emit(new OutcomeEvent(EventName.JOB_FAILED, jobId, taskName, encoded, -1, false, 0L));
+            bound.failJob(token, encoded, RetryDecision.isRetryable(task.retryOn, t));
         } finally {
             if (scope != null) {
                 Resources.exit(scope); // unbind the thread + dispose task-scoped resources (LIFO)

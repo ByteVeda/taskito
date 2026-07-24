@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.byteveda.taskito.autoscale.AutoscaleOptions;
@@ -26,6 +27,8 @@ import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.events.TaskitoEvent;
+import org.byteveda.taskito.events.WorkerEvent;
 import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.pubsub.LogConsumerConfig;
@@ -59,6 +62,11 @@ public final class Worker implements AutoCloseable {
     private final ResourceRuntime resources;
     private final Autoscaler autoscaler;
     private final List<LogConsumerThread> logConsumers;
+    private final Emitter emitter;
+    private final List<String> servedQueues;
+    /** Guards the one-shot {@code worker.stopped} emission shared by {@link #stop()} and {@link #close()}. */
+    private final AtomicBoolean stoppedEmitted = new AtomicBoolean();
+
     private final CountDownLatch shutdown = new CountDownLatch(1);
     private boolean closed;
 
@@ -68,13 +76,17 @@ public final class Worker implements AutoCloseable {
             WorkflowTracker tracker,
             ResourceRuntime resources,
             Autoscaler autoscaler,
-            List<LogConsumerThread> logConsumers) {
+            List<LogConsumerThread> logConsumers,
+            Emitter emitter,
+            List<String> servedQueues) {
         this.control = control;
         this.executor = executor;
         this.tracker = tracker;
         this.resources = resources;
         this.autoscaler = autoscaler;
         this.logConsumers = logConsumers;
+        this.emitter = emitter;
+        this.servedQueues = servedQueues;
     }
 
     public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
@@ -93,6 +105,14 @@ public final class Worker implements AutoCloseable {
     /** Stop dispatching; in-flight jobs continue to drain. */
     public void stop() {
         control.stop();
+        emitStopped();
+    }
+
+    /** Emit {@code worker.stopped} exactly once across {@link #stop()} and {@link #close()}. */
+    private void emitStopped() {
+        if (stoppedEmitted.compareAndSet(false, true)) {
+            emitter.emit(new WorkerEvent(EventName.WORKER_STOPPED, servedQueues));
+        }
     }
 
     /**
@@ -151,6 +171,7 @@ public final class Worker implements AutoCloseable {
             autoscaler.close(); // stop resizing before we tear the pool down
         }
         control.stop(); // stop scheduling new work
+        emitStopped();
         stopLogConsumers(); // drain managed consumers before the backend tears down
         executor.shutdown(); // stop accepting; let running handlers finish
         try {
@@ -170,6 +191,7 @@ public final class Worker implements AutoCloseable {
         // Safe even if a straggler survives: JniWorkerControl serializes close()
         // against in-flight native calls and rejects any call made afterwards.
         control.close();
+        emitter.emit(new WorkerEvent(EventName.WORKER_OFFLINE, servedQueues));
         if (tracker != null) {
             tracker.close(); // stop the gate-timeout scheduler
         }
@@ -216,7 +238,7 @@ public final class Worker implements AutoCloseable {
          */
         private final Map<String, Task<?>> taskPolicies = new LinkedHashMap<>();
 
-        private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
+        private final Map<EventName, List<Consumer<TaskitoEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<SubscriptionConfig> subscriptions = List.of();
         private Supplier<List<Map<String, Object>>> queueConfigs = List::of;
         private List<String> queues;
@@ -228,6 +250,7 @@ public final class Worker implements AutoCloseable {
         private MeshOptions mesh;
         private Retention retention;
         private boolean pushDispatch;
+        private Emitter hub;
 
         Builder(
                 QueueBackend backend,
@@ -389,8 +412,29 @@ public final class Worker implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Listen to a job outcome's {@link OutcomeEvent}s. Only valid for names
+         * where {@link EventName#isJobOutcome()} holds; subscribe to other
+         * events via {@link #onEvent}.
+         */
         public Builder on(EventName name, Consumer<OutcomeEvent> listener) {
+            name.requireJobOutcome();
+            return onEvent(name, event -> listener.accept((OutcomeEvent) event));
+        }
+
+        /** Listen to any of this worker's events by name; the listener narrows to the concrete type. */
+        public Builder onEvent(EventName name, Consumer<TaskitoEvent> listener) {
             listeners.computeIfAbsent(name, key -> new ArrayList<>()).add(listener);
+            return this;
+        }
+
+        /**
+         * Forward this worker's events to a queue-level {@link Emitter} (wired by
+         * {@code Taskito.worker()}), so listeners registered via the queue's
+         * {@code onEvent} also see them.
+         */
+        public Builder eventHub(Emitter hub) {
+            this.hub = hub;
             return this;
         }
 
@@ -438,11 +482,17 @@ public final class Worker implements AutoCloseable {
                 executor =
                         concurrency > 0 ? Executors.newFixedThreadPool(concurrency) : Executors.newCachedThreadPool();
             }
-            Emitter emitter = new Emitter();
-            listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
+            Emitter emitter = new Emitter(hub);
+            listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.onEvent(name, listener)));
+            if (tracker != null) {
+                tracker.bindEmitter(emitter);
+            }
             WorkerDispatchBridge bridge = new WorkerDispatchBridge(
                     backend, handlers, serializer, executor, emitter, middleware, resources, codecs);
+            List<String> servedQueues = queues == null ? List.of() : List.copyOf(queues);
+            emitter.emit(new WorkerEvent(EventName.WORKER_STARTED, servedQueues));
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
+            emitter.emit(new WorkerEvent(EventName.WORKER_ONLINE, servedQueues));
             bridge.bind(control);
             // Lease worker resources only after the native worker started cleanly.
             resources.acquireWorker();
@@ -451,7 +501,7 @@ public final class Worker implements AutoCloseable {
             }
             // Managed log-topic consumers: one poll loop each, beside the worker.
             List<LogConsumerThread> consumerThreads = startLogConsumers();
-            return new Worker(control, executor, tracker, resources, scaler, consumerThreads);
+            return new Worker(control, executor, tracker, resources, scaler, consumerThreads, emitter, servedQueues);
         }
 
         /** Spawn one daemon poll loop per declared log consumer; empty when none. */

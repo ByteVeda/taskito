@@ -12,6 +12,9 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.byteveda.taskito.errors.WorkflowException;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.NodeCompensationEvent;
+import org.byteveda.taskito.events.WorkflowEvent;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
 
@@ -78,6 +81,7 @@ final class SagaOrchestrator {
         }
         synchronized (run) {
             backend.setWorkflowRunCompensating(runId);
+            tracker.emit(new WorkflowEvent(EventName.WORKFLOW_COMPENSATING, runId, null, null));
             dispatchOrFail(runId, run);
         }
         return true;
@@ -100,8 +104,11 @@ final class SagaOrchestrator {
         synchronized (run) {
             if (succeeded) {
                 backend.setWorkflowNodeCompensated(runId, node, now());
+                tracker.emit(new NodeCompensationEvent(EventName.WORKFLOW_NODE_COMPENSATED, runId, node, null));
             } else {
                 backend.setWorkflowNodeCompensationFailed(runId, node, error, now());
+                tracker.emit(
+                        new NodeCompensationEvent(EventName.WORKFLOW_NODE_COMPENSATION_FAILED, runId, node, error));
                 run.anyFailed = true;
             }
             run.inflight.remove(node);
@@ -140,6 +147,7 @@ final class SagaOrchestrator {
             String compJobId = enqueueCompensation(runId, node, run.targets.get(node));
             compensationJobs.put(compJobId, new String[] {runId, node});
             backend.setWorkflowNodeCompensationJob(runId, node, compJobId, now());
+            tracker.emit(new NodeCompensationEvent(EventName.WORKFLOW_NODE_COMPENSATING, runId, node, null));
         }
     }
 
@@ -168,8 +176,11 @@ final class SagaOrchestrator {
         compensationJobs.values().removeIf(key -> key[0].equals(runId));
         if (run.anyFailed) {
             backend.setWorkflowRunCompensationFailed(runId, now(), "saga compensation failed");
+            tracker.emit(
+                    new WorkflowEvent(EventName.WORKFLOW_COMPENSATION_FAILED, runId, null, "saga compensation failed"));
         } else {
             backend.setWorkflowRunCompensated(runId, now());
+            tracker.emit(new WorkflowEvent(EventName.WORKFLOW_COMPENSATED, runId, null, null));
         }
         tracker.forget(runId);
     }

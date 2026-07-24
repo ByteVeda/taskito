@@ -22,7 +22,12 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
+import org.byteveda.taskito.events.Emitter;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.GateEvent;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.events.TaskitoEvent;
+import org.byteveda.taskito.events.WorkflowEvent;
 import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
@@ -77,6 +82,9 @@ public final class WorkflowTracker {
     /** Incremental cache: {@code cacheKey -> expiry millis}, so a re-run of a cacheable step is a cache hit. */
     private final ConcurrentMap<String, Long> resultCache = new ConcurrentHashMap<>();
 
+    /** The owning worker's emitter (bound at worker start); null until then. */
+    private volatile Emitter emitter;
+
     public WorkflowTracker(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
         this.serializer = serializer;
@@ -101,6 +109,19 @@ public final class WorkflowTracker {
         }
         deferredPayloads.put(workflow.name(), byNode);
         callableConditions.put(workflow.name(), conditions);
+    }
+
+    /** Bind the emitter workflow lifecycle events dispatch through (wired by the worker at start). */
+    public void bindEmitter(Emitter emitter) {
+        this.emitter = emitter;
+    }
+
+    /** Emit a workflow event through the bound emitter; a no-op until one is bound. */
+    void emit(TaskitoEvent event) {
+        Emitter bound = emitter;
+        if (bound != null) {
+            bound.emit(event);
+        }
     }
 
     /** Route a successful job outcome. */
@@ -452,6 +473,7 @@ public final class WorkflowTracker {
         childRunPayloads.put(childRun, allPayloads);
         childToParent.put(childRun, new String[] {runId, node.name});
         backend.setWorkflowNodeRunning(runId, node.name);
+        emit(new WorkflowEvent(EventName.WORKFLOW_SUBMITTED, childRun, child.name, null));
     }
 
     /** Whether {@code node}'s condition holds given its predecessors' outcomes. */
@@ -505,6 +527,7 @@ public final class WorkflowTracker {
     /** Park a gate node for approval, scheduling its timeout auto-resolution if any. */
     private void enterGate(String runId, PlanNode node) {
         backend.setWorkflowNodeWaitingApproval(runId, node.name);
+        emit(new GateEvent(runId, node.name));
         GateMeta meta = node.gate == null ? null : decode(node.gate, GateMeta.class);
         if (meta != null && meta.timeoutMs != null) {
             GateKey key = new GateKey(runId, node.name);
@@ -609,8 +632,11 @@ public final class WorkflowTracker {
         if (finalState.isEmpty()) {
             return;
         }
+        // Resolve the workflow's name BEFORE forget() clears the run-name cache.
+        String workflowName = workflowName(runId);
         String[] parent = childToParent.remove(runId);
         forget(runId); // run reached a terminal state — drop its cached state
+        emitRunFinalized(runId, workflowName, finalState.get());
         if (parent != null) {
             // This run is a sub-workflow child — resolve its parent node, then advance the parent.
             boolean succeeded = "completed".equals(finalState.get());
@@ -619,6 +645,20 @@ public final class WorkflowTracker {
                     parent[1],
                     succeeded,
                     succeeded ? null : "sub-workflow " + runId + " " + finalState.get());
+        }
+    }
+
+    /** Emit the run's terminal lifecycle event; unknown states (defensive) emit nothing. */
+    private void emitRunFinalized(String runId, String workflowName, String state) {
+        EventName name =
+                switch (state) {
+                    case "completed" -> EventName.WORKFLOW_COMPLETED;
+                    case "failed" -> EventName.WORKFLOW_FAILED;
+                    case "completed_with_failures" -> EventName.WORKFLOW_COMPLETED_WITH_FAILURES;
+                    default -> null; // compensation finals are emitted by the saga
+                };
+        if (name != null) {
+            emit(new WorkflowEvent(name, runId, workflowName, null));
         }
     }
 

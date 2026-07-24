@@ -25,6 +25,13 @@ import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.errors.QueueFullException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
+import org.byteveda.taskito.events.Emitter;
+import org.byteveda.taskito.events.EnqueuedEvent;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.PredicateEvent;
+import org.byteveda.taskito.events.QueueEvent;
+import org.byteveda.taskito.events.TaskitoEvent;
+import org.byteveda.taskito.events.WorkflowEvent;
 import org.byteveda.taskito.interception.Interception;
 import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.internal.IdempotencyKeys;
@@ -113,6 +120,9 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     private final Map<String, long[]> codelConfigs = new ConcurrentHashMap<>();
     // Opt-in per-queue dispatch order (queue -> "lifo"). Absent = "fifo".
     private final Map<String, String> dispatchOrders = new ConcurrentHashMap<>();
+    // Queue-level event hub: local emissions land here, and every worker built
+    // via worker() forwards its events here through its emitter's parent link.
+    private final Emitter events = new Emitter();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
         this.backend = backend;
@@ -129,6 +139,12 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public Taskito use(Middleware middleware) {
         this.middleware.add(middleware);
+        return this;
+    }
+
+    @Override
+    public Taskito onEvent(EventName name, Consumer<TaskitoEvent> listener) {
+        events.onEvent(name, listener);
         return this;
     }
 
@@ -187,7 +203,7 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
      * count-then-insert, like the rate limiter.
      */
     private void rejectIfQueueFull(String queueOrNull, int incoming) {
-        String queue = queueOrNull == null ? "default" : queueOrNull;
+        String queue = queueOrDefault(queueOrNull);
         Integer cap = maxPending.get(queue);
         if (cap == null) {
             return;
@@ -360,6 +376,7 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
         // middleware may have rewritten it); the first non-Allow decision wins.
         EnqueueDecision decision = evaluate(taskName, context.payload());
         if (decision instanceof EnqueueDecision.Reject reject) {
+            events.emit(new PredicateEvent(taskName, reject.reason()));
             throw new PredicateRejectedException("enqueue of '" + taskName + "' rejected: " + reject.reason());
         }
         if (decision instanceof EnqueueDecision.Skip) {
@@ -385,7 +402,9 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
             finalOptions = finalOptions.toBuilder().uniqueKey(uniqueKey).build();
         }
         byte[] data = encodeCodecs(payloadBytes, codecNames);
-        return Optional.of(backend.enqueue(taskName, data, encode(finalOptions)));
+        String jobId = backend.enqueue(taskName, data, encode(finalOptions));
+        events.emit(new EnqueuedEvent(jobId, taskName, queueOrDefault(finalOptions.queue())));
+        return Optional.of(jobId);
     }
 
     /**
@@ -465,6 +484,7 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
             Object payload = interceptBatchPayload(task.name(), payloads.get(i));
             EnqueueDecision decision = evaluate(task.name(), payload);
             if (decision instanceof EnqueueDecision.Reject reject) {
+                events.emit(new PredicateEvent(task.name(), reject.reason()));
                 throw new PredicateRejectedException("enqueue of '" + task.name() + "' rejected: " + reject.reason());
             }
             if (!(decision instanceof EnqueueDecision.Allow)) {
@@ -488,7 +508,12 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
         // The whole batch targets one queue (a single `options`); reject before
         // inserting if admitting all of it would push that queue past its cap.
         rejectIfQueueFull(options.queue(), payloads.size());
-        return Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
+        List<String> jobIds = Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
+        String queue = queueOrDefault(options.queue());
+        for (String jobId : jobIds) {
+            events.emit(new EnqueuedEvent(jobId, task.name(), queue));
+        }
+        return jobIds;
     }
 
     /**
@@ -677,11 +702,18 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     /** Pause one named queue; backs {@link NamedQueue#pause()}. */
     void pauseLane(String queue) {
         backend.pauseQueue(queue);
+        events.emit(new QueueEvent(EventName.QUEUE_PAUSED, queue));
     }
 
     /** Resume one named queue; backs {@link NamedQueue#resume()}. */
     void resumeLane(String queue) {
         backend.resumeQueue(queue);
+        events.emit(new QueueEvent(EventName.QUEUE_RESUMED, queue));
+    }
+
+    /** The effective queue name: an unset option targets the {@code default} queue. */
+    private static String queueOrDefault(String queueOrNull) {
+        return queueOrNull == null ? "default" : queueOrNull;
     }
 
     @Override
@@ -1133,6 +1165,7 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
                 deferred.toArray(new String[0]),
                 null,
                 null);
+        events.emit(new WorkflowEvent(EventName.WORKFLOW_SUBMITTED, runId, workflow.name(), null));
         return new WorkflowRun(backend, VIEWS, runId, workflow.name());
     }
 
@@ -1204,6 +1237,7 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public void cancelWorkflow(String runId) {
         backend.cancelWorkflowRun(runId);
+        events.emit(new WorkflowEvent(EventName.WORKFLOW_CANCELLED, runId, null, null));
     }
 
     @Override
@@ -1337,7 +1371,8 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
         return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs)
                 .subscriptions(subscriptions)
                 .logConsumers(logConsumers, this)
-                .queueConfigs(this::encodeQueueConfigs);
+                .queueConfigs(this::encodeQueueConfigs)
+                .eventHub(events);
     }
 
     @Override

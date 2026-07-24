@@ -6,13 +6,22 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WebhookException;
+import org.byteveda.taskito.events.EnqueuedEvent;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.GateEvent;
+import org.byteveda.taskito.events.NodeCompensationEvent;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.events.PredicateEvent;
+import org.byteveda.taskito.events.QueueEvent;
+import org.byteveda.taskito.events.TaskitoEvent;
+import org.byteveda.taskito.events.WorkerEvent;
+import org.byteveda.taskito.events.WorkflowEvent;
 import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
 
@@ -50,7 +59,27 @@ public final class WebhookManager implements Middleware {
     public static WebhookManager attach(Taskito queue) {
         WebhookManager manager = new WebhookManager(queue);
         queue.use(manager);
+        manager.subscribeQueueEvents(queue);
         return manager;
+    }
+
+    /**
+     * Subscribe the non-outcome taxonomy (plus per-attempt {@code job.failed})
+     * through the queue's event hub. Terminal outcomes keep arriving via the
+     * middleware hooks, so they are not double-subscribed. Skipped entirely when
+     * the queue has no event hub.
+     */
+    private void subscribeQueueEvents(Taskito queue) {
+        try {
+            for (EventName name : EventName.values()) {
+                if (name.isJobOutcome() && name != EventName.JOB_FAILED) {
+                    continue;
+                }
+                queue.onEvent(name, this::dispatchEvent);
+            }
+        } catch (UnsupportedOperationException e) {
+            // No event hub on this queue implementation; outcome dispatch still works.
+        }
     }
 
     /**
@@ -205,14 +234,71 @@ public final class WebhookManager implements Middleware {
         if (hooks.isEmpty()) {
             return;
         }
-        String wire = event.name.name().toLowerCase(Locale.ROOT);
+        EventName name = event.name();
+        String wire = name.wireName();
         byte[] body = payload(event, wire);
         DeliveryContext ctx = new DeliveryContext(wire, event.taskName, event.jobId);
         for (Webhook hook : hooks) {
-            if (hook.enabled && hook.events.contains(wire) && matches(hook.taskFilter, event.taskName)) {
+            if (hook.enabled && subscribedTo(hook, name) && matches(hook.taskFilter, event.taskName)) {
                 deliverOne(hook, body, ctx);
             }
         }
+    }
+
+    /**
+     * Deliver a non-outcome event (or a per-attempt {@code job.failed}, which
+     * carries the full outcome body) to matching hooks. Hooks with a task filter
+     * only match task-bearing events.
+     */
+    void dispatchEvent(TaskitoEvent event) {
+        if (event instanceof OutcomeEvent outcome) {
+            dispatch(outcome);
+            return;
+        }
+        List<Webhook> hooks = activeHooks();
+        if (hooks.isEmpty()) {
+            return;
+        }
+        EventName name = event.name();
+        String wire = name.wireName();
+        String taskName = taskNameOf(event);
+        String jobId = event instanceof EnqueuedEvent enqueued ? enqueued.jobId() : null;
+        byte[] body = eventPayload(event, wire);
+        DeliveryContext ctx = new DeliveryContext(wire, taskName, jobId);
+        for (Webhook hook : hooks) {
+            if (hook.enabled && subscribedTo(hook, name) && matches(hook.taskFilter, taskName)) {
+                deliverOne(hook, body, ctx);
+            }
+        }
+    }
+
+    /**
+     * Whether the hook subscribes to {@code name}. Stored strings are normalized
+     * through {@link EventName#fromWire}, so subscriptions persisted before the
+     * dotted wire names (e.g. {@code "success"}) still match.
+     */
+    private static boolean subscribedTo(Webhook hook, EventName name) {
+        for (String stored : hook.events) {
+            try {
+                if (EventName.fromWire(stored) == name) {
+                    return true;
+                }
+            } catch (SerializationException e) {
+                // An unknown stored token never matches a live event; skip it.
+            }
+        }
+        return false;
+    }
+
+    /** The task an event concerns, or null for events that carry no task. */
+    private static String taskNameOf(TaskitoEvent event) {
+        if (event instanceof EnqueuedEvent enqueued) {
+            return enqueued.taskName();
+        }
+        if (event instanceof PredicateEvent predicate) {
+            return predicate.taskName();
+        }
+        return null;
     }
 
     private void deliverOne(Webhook hook, byte[] body, DeliveryContext ctx) {
@@ -278,7 +364,7 @@ public final class WebhookManager implements Middleware {
         return filter == null || filter.equals(taskName);
     }
 
-    private static byte[] payload(OutcomeEvent event, String wire) {
+    static byte[] payload(OutcomeEvent event, String wire) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("event", wire);
         body.put("job_id", event.jobId);
@@ -286,6 +372,37 @@ public final class WebhookManager implements Middleware {
         body.put("error", event.error);
         body.put("retry_count", event.retryCount);
         body.put("timed_out", event.timedOut);
+        body.put("duration_ms", event.durationMs());
+        return encode(body);
+    }
+
+    /** The per-type snake_case body of a non-outcome event's delivery. */
+    static byte[] eventPayload(TaskitoEvent event, String wire) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("event", wire);
+        if (event instanceof EnqueuedEvent enqueued) {
+            body.put("job_id", enqueued.jobId());
+            body.put("task_name", enqueued.taskName());
+            body.put("queue", enqueued.queue());
+        } else if (event instanceof QueueEvent queueEvent) {
+            body.put("queue", queueEvent.queue());
+        } else if (event instanceof WorkerEvent workerEvent) {
+            body.put("queues", workerEvent.queues());
+        } else if (event instanceof WorkflowEvent workflowEvent) {
+            body.put("run_id", workflowEvent.runId());
+            body.put("workflow", workflowEvent.workflowName());
+            body.put("error", workflowEvent.error());
+        } else if (event instanceof GateEvent gate) {
+            body.put("run_id", gate.runId());
+            body.put("node", gate.nodeName());
+        } else if (event instanceof NodeCompensationEvent compensation) {
+            body.put("run_id", compensation.runId());
+            body.put("node", compensation.nodeName());
+            body.put("error", compensation.error());
+        } else if (event instanceof PredicateEvent predicate) {
+            body.put("task_name", predicate.taskName());
+            body.put("reason", predicate.reason());
+        }
         return encode(body);
     }
 
