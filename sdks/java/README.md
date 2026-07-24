@@ -11,25 +11,62 @@ visualization, canvas). Also: worker resources (DI), enqueue predicates, a KEDA
 scaler endpoint, producer batching, in-process autoscaling, observability
 middleware (Micrometer Observation + Sentry), and a Spring Boot 3 starter.
 Baseline: **Java 17** (`--release 17`); on JDK 22+ hot byte ops take a Panama
-(FFM) fast path automatically. The native library is bundled per platform —
-no separate install.
+(FFM) fast path automatically. The native library ships as a per-platform
+classifier artifact next to a native-free main jar — add the classifier for
+your platform (`linux-x86_64`, `linux-aarch64`, `osx-x86_64`, `osx-aarch64`,
+`windows-x86_64`) and the runtime resolves it from the classpath.
 
 ## Install
 
 ```kotlin
 // Gradle
 implementation("org.byteveda:taskito:0.18.0")
+runtimeOnly("org.byteveda:taskito:0.18.0:linux-x86_64") // native library for your platform
 annotationProcessor("org.byteveda:taskito-processor:0.18.0") // compile-time TaskHandler bindings
 ```
 
+To pick the classifier automatically, use the
+[osdetector](https://github.com/google/osdetector-gradle-plugin) plugin:
+
+```kotlin
+plugins { id("com.google.osdetector") version "1.7.3" }
+
+dependencies {
+    runtimeOnly("org.byteveda:taskito:0.18.0:${osdetector.classifier}")
+}
+```
+
 ```xml
-<!-- Maven -->
+<!-- Maven: os-maven-plugin resolves ${os.detected.classifier} -->
+<build>
+  <extensions>
+    <extension>
+      <groupId>kr.motd.maven</groupId>
+      <artifactId>os-maven-plugin</artifactId>
+      <version>1.7.1</version>
+    </extension>
+  </extensions>
+</build>
+
 <dependency>
   <groupId>org.byteveda</groupId>
   <artifactId>taskito</artifactId>
   <version>0.18.0</version>
 </dependency>
+<dependency>
+  <groupId>org.byteveda</groupId>
+  <artifactId>taskito</artifactId>
+  <version>0.18.0</version>
+  <classifier>${os.detected.classifier}</classifier>
+  <scope>runtime</scope>
+</dependency>
 ```
+
+Deploying one artifact to several platforms? Add multiple classifier
+dependencies — each jar carries only its own library, and the loader picks the
+right one at runtime. Supplying your own build instead (e.g. a custom feature
+set): skip the classifier and point `-Dtaskito.native.lib=/path/to/library` at
+it — the classifier-free main jar works with no bundled native.
 
 ```xml
 <!-- Maven: the processor is wired through the compiler plugin, not a dependency -->

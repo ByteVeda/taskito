@@ -24,21 +24,31 @@ public final class Smoke {
     public static void main(String[] args) throws Exception {
         Path dir = Files.createTempDirectory("taskito-graalvm-smoke");
         Task<String> echo = Task.of("echo", String.class);
+        Task<String> doomed = Task.of("doomed", String.class).maxRetries(0);
 
         try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("smoke.db").toString())
                 .open()) {
             String id = queue.enqueue(echo, "graalvm");
+            queue.enqueue(doomed, "dead-letter");
 
             CountDownLatch done = new CountDownLatch(1);
+            CountDownLatch dead = new CountDownLatch(1);
             Worker worker = queue.worker()
                     .handle(echo, (String payload) -> payload.length())
+                    .handle(doomed, (String payload) -> {
+                        throw new IllegalStateException("always fails");
+                    })
                     .on(EventName.SUCCESS, event -> done.countDown())
+                    .on(EventName.DEAD, event -> dead.countDown())
                     .start();
             try (worker) {
                 if (!done.await(20, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("task did not complete");
+                }
+                if (!dead.await(20, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("doomed task did not dead-letter");
                 }
             }
 
@@ -57,7 +67,11 @@ public final class Smoke {
             if (queue.listPeriodic().isEmpty()) {
                 throw new IllegalStateException("listPeriodic returned empty");
             }
-            queue.listDead(10, 0);
+            // Non-empty on purpose: DeadJob's @JsonCreator constructor must be
+            // invocable under native-image, and an empty page never exercises it.
+            if (queue.listDead(10, 0).isEmpty()) {
+                throw new IllegalStateException("listDead returned empty");
+            }
             // Page is generic, so its element type has to be exercised too.
             queue.listJobsAfter(JobFilter.builder().limit(10).build(), null);
 

@@ -28,7 +28,7 @@ Taskito.builder().redis("redis://localhost").prefix("taskito").open();
 
 `backend(name)` + `url(dsn)` are the generic forms behind the shortcuts;
 `poolSize(int)` sizes the connection pool and `namespace(String)` isolates one
-application's jobs in a shared store. All three backends ship in the bundled
+application's jobs in a shared store. All three backends ship in the published
 native library — no extra build step.
 
 <Callout type="info">

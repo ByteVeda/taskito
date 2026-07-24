@@ -1,27 +1,55 @@
 ---
 title: Installation
-description: "Install the Java SDK — Maven Central coordinates, bundled native binaries, three backends."
+description: "Install the Java SDK — Maven Central coordinates, per-platform native artifacts, three backends."
 ---
 
 The Java SDK is a typed shell over the Taskito Rust core, bound through a
-hand-written JNI layer. Baseline: **Java 17**.
+hand-written JNI layer. Baseline: **Java 17**. The Rust core ships as a
+per-platform classifier artifact next to a native-free main jar — add both.
 
 <Tabs items={["Gradle", "Maven"]}>
   <Tab value="Gradle">
 
 ```kotlin
-implementation("org.byteveda:taskito:0.18.0")
-annotationProcessor("org.byteveda:taskito-processor:0.18.0") // compile-time TaskHandler bindings
+plugins { id("com.google.osdetector") version "1.7.3" }
+
+dependencies {
+    implementation("org.byteveda:taskito:0.18.0")
+    runtimeOnly("org.byteveda:taskito:0.18.0:${osdetector.classifier}") // native library
+    annotationProcessor("org.byteveda:taskito-processor:0.18.0") // compile-time TaskHandler bindings
+}
 ```
+
+The [osdetector](https://github.com/google/osdetector-gradle-plugin) plugin
+resolves your platform's classifier; you can also write it literally, e.g.
+`runtimeOnly("org.byteveda:taskito:0.18.0:linux-x86_64")`.
 
   </Tab>
   <Tab value="Maven">
 
 ```xml
+<!-- os-maven-plugin resolves ${os.detected.classifier} -->
+<build>
+  <extensions>
+    <extension>
+      <groupId>kr.motd.maven</groupId>
+      <artifactId>os-maven-plugin</artifactId>
+      <version>1.7.1</version>
+    </extension>
+  </extensions>
+</build>
+
 <dependency>
   <groupId>org.byteveda</groupId>
   <artifactId>taskito</artifactId>
   <version>0.18.0</version>
+</dependency>
+<dependency>
+  <groupId>org.byteveda</groupId>
+  <artifactId>taskito</artifactId>
+  <version>0.18.0</version>
+  <classifier>${os.detected.classifier}</classifier>
+  <scope>runtime</scope>
 </dependency>
 ```
 
@@ -54,20 +82,25 @@ Companion artifacts: `org.byteveda:taskito-test` (in-memory backend for unit
 tests, no native library) and `org.byteveda:taskito-spring` (Spring Boot 3
 starter).
 
-## Bundled native library
+## Native library artifacts
 
-The Rust core ships inside the JAR as a prebuilt library per platform — no
-separate install:
+The Rust core is published as one classifier artifact per platform:
 
-- linux x86_64 / aarch64
-- macOS x86_64 / aarch64
-- Windows x86_64
+- `linux-x86_64` / `linux-aarch64`
+- `osx-x86_64` / `osx-aarch64`
+- `windows-x86_64`
+
+Each classifier jar carries only its own library; the runtime resolves the
+matching one from the classpath. Deploying to several platforms from one build?
+Add multiple classifier dependencies — extra platforms cost nothing at runtime.
 
 At runtime the platform binary is extracted (content-addressed, safe under
 concurrent processes) and loaded. Two system properties tune this:
-`-Dtaskito.native.lib=/abs/path` loads an explicit library (local development
-against a fresh build), and `-Dtaskito.native.workdir=/var/lib/myapp/taskito-native`
-relocates extraction on hardened `noexec /tmp` hosts.
+`-Dtaskito.native.lib=/abs/path` loads an explicit library instead — for local
+development against a fresh build, or a custom-feature build with no classifier
+artifact at all (the main jar is native-free and works standalone this way) —
+and `-Dtaskito.native.workdir=/var/lib/myapp/taskito-native` relocates
+extraction on hardened `noexec /tmp` hosts.
 
 <Callout type="info">
   On JDK 22+ hot byte operations automatically take a Project Panama (FFM) fast

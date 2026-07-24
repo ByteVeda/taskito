@@ -17,7 +17,8 @@ import java.util.Locale;
  * Loads the native Taskito library.
  *
  * <p>Order: an explicit {@code -Dtaskito.native.lib=/path} override, otherwise
- * the platform binary bundled in the JAR is extracted and loaded. Extraction is
+ * the platform binary on the classpath (shipped in the matching per-platform
+ * classifier jar) is extracted and loaded. Extraction is
  * content-addressed — the target file name embeds a hash of the bytes — so it is
  * safe under concurrent processes (atomic move), avoids re-extraction across
  * runs, and never loads a stale binary from a previous build. Honor
@@ -104,8 +105,10 @@ public final class NativeLoader {
         String resource = "/org/byteveda/taskito/native/" + platformDir() + "/" + System.mapLibraryName(LIB);
         try (InputStream in = NativeLoader.class.getResourceAsStream(resource)) {
             if (in == null) {
-                throw new UnsatisfiedLinkError("no bundled native library for platform '" + platformDir() + "' ("
-                        + resource + "); set -Dtaskito.native.lib=/path/to/library");
+                throw new UnsatisfiedLinkError("no native library for platform '" + platformDir() + "' on the"
+                        + " classpath (" + resource + "); add the classifier artifact"
+                        + " org.byteveda:taskito:<version>:" + platformDir()
+                        + " as a runtime dependency, or set -Dtaskito.native.lib=/path/to/library");
             }
             return in.readAllBytes();
         } catch (IOException e) {
