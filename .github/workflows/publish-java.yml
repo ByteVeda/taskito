@@ -1,10 +1,12 @@
 name: Publish to Maven Central
 
 # Builds the JNI cdylib as prebuilt per-platform binaries on native runners (no
-# cross-compilation — same approach as the Python wheels and Node addons), bundles
-# them all into one fat JAR, and publishes to Maven Central via the Central
-# Publisher Portal (OSSRH shut down 2025-06-30). Signing + upload are handled by
-# the vanniktech maven-publish plugin.
+# cross-compilation — same approach as the Python wheels and Node addons),
+# packages each as a per-platform classifier jar next to a native-free main jar
+# (NativeLoader resolves the matching classifier from the classpath at runtime),
+# and publishes to Maven Central via the Central Publisher Portal (OSSRH shut
+# down 2025-06-30). Signing + upload are handled by the vanniktech maven-publish
+# plugin.
 
 on:
   push:
@@ -146,19 +148,23 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Place natives in resources
-        run: cp -r artifacts/org sdks/java/src/main/resources/
+      # The per-platform classifier jars package from build/native; the cargo/
+      # copyNative tasks (skipped below) only cover the host platform, so stage
+      # every downloaded binary there.
+      - name: Stage natives for the classifier jars
+        run: |
+          mkdir -p sdks/java/build/native
+          cp -r artifacts/org sdks/java/build/native/
 
-      # The cargo/copyNative tasks build only the host platform; skip them since
-      # every platform's binary is already staged in resources from the matrix.
       # Dry-run assembles all publish artifacts so javadoc/doclint failures
       # surface here, not during the live publish; secrets stay out of it.
       - name: Assemble publish artifacts (dry-run)
         if: inputs.dry-run
         working-directory: sdks/java
-        run: ./gradlew jar sourcesJar plainJavadocJar -x cargoBuild -x copyNative --no-daemon
+        run: ./gradlew jar nativeJars sourcesJar plainJavadocJar -x cargoBuild -x copyNative --no-daemon
 
-      # MR-jar layout + native bundling only come together here — assert them.
+      # MR-jar layout + classifier packaging only come together here — assert
+      # a native-free main jar and one single-library jar per platform.
       - name: Verify jar contents (dry-run)
         if: inputs.dry-run
         working-directory: sdks/java
@@ -167,9 +173,18 @@ jobs:
           echo "checking $jar"
           unzip -p "$jar" META-INF/MANIFEST.MF | grep -q "Multi-Release: true"
           unzip -l "$jar" | grep -q "META-INF/versions/22/org/byteveda/taskito/internal/FfmTransport.class"
+          unzip -l "$jar" | grep -q "META-INF/native-image/org.byteveda/taskito/" \
+            || { echo "missing GraalVM reachability metadata"; exit 1; }
+          if unzip -l "$jar" | grep -q "org/byteveda/taskito/native/"; then
+            echo "main jar must not bundle native libraries"; exit 1
+          fi
           for platform in linux-x86_64 linux-aarch64 osx-x86_64 osx-aarch64 windows-x86_64; do
-            unzip -l "$jar" | grep -q "org/byteveda/taskito/native/$platform/" \
+            njar="build/libs/taskito-${VERSION}-${platform}.jar"
+            echo "checking $njar"
+            unzip -l "$njar" | grep -q "org/byteveda/taskito/native/$platform/" \
               || { echo "missing native library for $platform"; exit 1; }
+            libs=$(unzip -l "$njar" | grep -c "\(\.so\|\.dylib\|\.dll\)$")
+            [ "$libs" = "1" ] || { echo "$njar must contain exactly one library, found $libs"; exit 1; }
           done
           sources=$(ls build/libs/taskito-*-sources.jar)
           if unzip -l "$sources" | grep -qE "org/byteveda/taskito/(native|dashboard)/"; then
