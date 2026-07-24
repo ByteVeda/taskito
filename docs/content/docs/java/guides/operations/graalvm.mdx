@@ -9,46 +9,40 @@ native binary) native image (with `--no-fallback`, so missing metadata fails
 the build) and runs the full enqueue → execute → result path in the compiled
 binary.
 
-Two design choices do the heavy lifting:
+Three design choices do the heavy lifting:
 
 - **No runtime reflection for handlers** — the `taskito-processor` annotation
   processor generates task bindings at compile time, so `@TaskHandler` wiring
   needs no reflection metadata at all.
 - **A narrow native seam** — the Rust engine is reached through a small, fixed
   JNI surface, and the model classes are plain Jackson DTOs.
+- **Shipped reachability metadata** — the `taskito` jar carries its own
+  metadata under `META-INF/native-image/org.byteveda/taskito/`, which
+  `native-image` discovers automatically. Taskito's JNI up-calls, DTO
+  reflection, and native-library resources need no tracing on your side.
 
 ## Building your app
 
-Use the standard GraalVM Gradle plugin, and generate reachability metadata for
-your application with the tracing agent — it records the JNI and Jackson
-paths your code actually exercises:
-
-```bash
-./gradlew -Pagent run          # run your app (or its tests) under the tracing agent
-./gradlew metadataCopy         # copy recorded metadata into src/main/resources/META-INF/native-image
-./gradlew nativeCompile        # build the native binary
-```
+Use the standard GraalVM Gradle plugin:
 
 ```kotlin
 graalvmNative {
     binaries.named("main") {
         buildArgs.add("--no-fallback") // fail on missing metadata, don't emit a fallback image
     }
-    agent {
-        metadataCopy {
-            inputTaskNames.add("run")
-            outputDirectories.add("src/main/resources/META-INF/native-image")
-            mergeWithExisting.set(true)
-        }
-    }
 }
 ```
 
-Exercise every taskito path your app uses under the agent — enqueue, worker
-execution, and any inspection APIs whose DTOs must deserialize — so the
-recorded metadata is complete. The bundled native library still extracts and
-loads at runtime exactly as on the JVM, so the
-[deployment](/java/guides/operations/deployment) properties
+```bash
+./gradlew nativeCompile        # build the native binary
+```
+
+If your *own* code uses reflection (or Jackson on your own types outside the
+generated task bindings), record that with the
+[tracing agent](https://www.graalvm.org/latest/reference-manual/native-image/metadata/AutomaticMetadataCollection/)
+as usual — taskito paths are already covered by the shipped metadata. The
+per-platform native library still extracts and loads at runtime exactly as on
+the JVM, so the [deployment](/java/guides/operations/deployment) properties
 (`taskito.native.workdir`, `taskito.native.lib`) apply to native binaries too.
 
 <Callout type="info">
