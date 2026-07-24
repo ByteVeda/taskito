@@ -17,7 +17,8 @@
   "name":"org.byteveda.taskito.model.DeadJob",
   "allDeclaredFields":true,
   "queryAllDeclaredMethods":true,
-  "queryAllDeclaredConstructors":true
+  "queryAllDeclaredConstructors":true,
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.String","java.lang.String","java.lang.String","java.lang.String","java.lang.String","int","long","java.lang.String","int"] }]
 },
 {
   "name":"org.byteveda.taskito.model.Job",
