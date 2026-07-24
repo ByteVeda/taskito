@@ -88,6 +88,8 @@ export class Worker {
     private readonly heartbeat: ReturnType<typeof setInterval>,
     private readonly consumerStops: readonly (() => void)[],
     private readonly emitter: Emitter,
+    /** Shared with the heartbeat closure so a beat resolving after stop() stays silent. */
+    private readonly lifecycle: { stopped: boolean },
   ) {}
 
   /**
@@ -309,11 +311,17 @@ export class Worker {
     // the next beat retries. First beat goes out immediately.
     let onlineReported = false;
     const previousUnhealthy = new Set<string>();
+    const lifecycle = { stopped: false };
     const sendHeartbeat = (): void => {
       const snapshot = resources.healthSnapshot();
       void queue
         .workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot))
         .then((reapedWorkerIds) => {
+          // A beat that resolves after stop() must not emit lifecycle events
+          // out of order (clearInterval can't cancel an in-flight promise).
+          if (lifecycle.stopped) {
+            return;
+          }
           // Online = the first heartbeat storage acknowledged, once.
           if (!onlineReported) {
             onlineReported = true;
@@ -358,11 +366,12 @@ export class Worker {
     // Managed log-topic consumers: one poll loop each, beside the heartbeat.
     const consumerStops = startLogConsumers(queue, serializer, params.logConsumers ?? []);
 
-    return new Worker(native, queue, resources, heartbeat, consumerStops, emitter);
+    return new Worker(native, queue, resources, heartbeat, consumerStops, emitter, lifecycle);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
+    this.lifecycle.stopped = true;
     // One last sweep for orphaned ephemeral subscriptions before this worker's
     // reap cadence goes away. Best effort — stopping must never throw.
     void this.queue.reapEphemeralSubscriptions().catch((error) => {
