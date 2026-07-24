@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager
 import pytest
 
 from taskito import Queue
+from taskito.events import EventType
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 from taskito.workflows.run import WorkflowTimeoutError
 
@@ -299,7 +300,6 @@ def test_workflow_emits_completed_event(
     queue: Queue, workflow_worker: WorkflowWorkerFactory
 ) -> None:
     """WORKFLOW_COMPLETED event fires on successful run completion."""
-    from taskito.events import EventType
 
     @queue.task()
     def noop() -> None:
@@ -325,6 +325,33 @@ def test_workflow_emits_completed_event(
 
     assert any(e.get("run_id") == run.id for e in events)
     assert any(e.get("state") == "completed" for e in events)
+
+
+def test_workflow_emits_submitted_event(queue: Queue) -> None:
+    """WORKFLOW_SUBMITTED event fires at submit time, no worker needed."""
+
+    @queue.task()
+    def noop() -> None:
+        return None
+
+    events: list[dict] = []
+    event_received = threading.Event()
+
+    def listener(_event_type: EventType, payload: dict) -> None:
+        events.append(payload)
+        event_received.set()
+
+    queue._event_bus.on(EventType.WORKFLOW_SUBMITTED, listener)
+
+    wf = Workflow(name="submit_event_pipe")
+    wf.step("x", noop)
+
+    run = queue.submit_workflow(wf)
+    event_received.wait(timeout=5)
+
+    assert any(
+        e.get("run_id") == run.id and e.get("workflow_name") == "submit_event_pipe" for e in events
+    )
 
 
 def test_workflow_run_repr(queue: Queue) -> None:

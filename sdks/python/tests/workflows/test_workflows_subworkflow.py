@@ -8,6 +8,7 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 from taskito import Queue
+from taskito.events import EventType
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
 WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
@@ -54,6 +55,41 @@ def test_sub_workflow_executes(queue: Queue, workflow_worker: WorkflowWorkerFact
     assert "load" in order
     assert "report" in order
     assert order.index("load") < order.index("report")
+
+
+def test_sub_workflow_emits_submitted_event(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
+) -> None:
+    """Child submission emits WORKFLOW_SUBMITTED carrying parent_run_id."""
+
+    @queue.task()
+    def child_step() -> str:
+        return "ok"
+
+    @queue.workflow("child_flow")
+    def child_flow() -> Workflow:
+        wf = Workflow()
+        wf.step("c", child_step)
+        return wf
+
+    events: list[dict] = []
+    queue._event_bus.on(EventType.WORKFLOW_SUBMITTED, lambda _et, payload: events.append(payload))
+
+    wf = Workflow(name="parent_events")
+    wf.step("child", child_flow.as_step())
+
+    with workflow_worker():
+        run = queue.submit_workflow(wf)
+        run.wait(timeout=20)
+        # Event-bus dispatch is asynchronous — the callback may lag run completion.
+        poll_until(
+            lambda: any(e.get("parent_run_id") == run.id for e in events),
+            message="child WORKFLOW_SUBMITTED was not delivered",
+        )
+
+    child_events = [e for e in events if e.get("parent_run_id") == run.id]
+    assert len(child_events) == 1
+    assert child_events[0]["workflow_name"] == "child_flow"
 
 
 def test_sub_workflow_failure(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
